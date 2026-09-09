@@ -14,7 +14,9 @@ mix.sass('resources/assets/sass/app.scss', 'public/css')
 .sass('resources/assets/sass/portfolio.scss', 'public/css')
 .sass('resources/assets/sass/spa.scss', 'public/css')
 .sass('resources/assets/sass/profile.scss', 'public/css')
-.sass('resources/assets/sass/landing.scss', 'public/css').version();
+.sass('resources/assets/sass/landing.scss', 'public/css')
+// pf-geo: fork feature, see docs/fork/GEO_FEED.md
+.sass('resources/assets/sass/geo.scss', 'public/css').version();
 
 mix.js('resources/assets/js/app.js', 'public/js')
 .js('resources/assets/js/activity.js', 'public/js')
@@ -46,6 +48,8 @@ mix.js('resources/assets/js/app.js', 'public/js')
 .js('resources/assets/js/group-topic-feed.js', 'public/js')
 .js('resources/assets/js/custom_filters.js', 'public/js')
 .js('resources/assets/js/settings.js', 'public/js')
+// pf-geo: fork feature, see docs/fork/GEO_FEED.md
+.js('resources/assets/js/geo.js', 'public/js')
 .vue({ version: 2 });
 
 mix.extract();

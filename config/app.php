@@ -164,6 +164,9 @@ return [
         // App\Providers\TelescopeServiceProvider::class,
         App\Providers\PassportServiceProvider::class,
 
+        // pf-geo: fork feature, see docs/fork/GEO_FEED.md
+        App\Geo\GeoServiceProvider::class,
+
     ],
 
     /*
