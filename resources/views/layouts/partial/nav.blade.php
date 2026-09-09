@@ -104,6 +104,15 @@
 									</span>
 									{{__('navmenu.discover')}}
 								</a>
+								{{-- pf-geo: fork feature, see docs/fork/GEO_FEED.md --}}
+								@if(config('geo.enabled'))
+								<a class="dropdown-item lead" href="/discover/map">
+									<span style="width: 50px;margin-right:14px;">
+										<span class="fal fa-map-marked-alt text-lighter fa-lg"></span>
+									</span>
+									{{__('Photo Map')}}
+								</a>
+								@endif
 
 								@if((bool) config_cache('instance.stories.enabled'))
 								<a class="dropdown-item lead" href="/i/stories/new">

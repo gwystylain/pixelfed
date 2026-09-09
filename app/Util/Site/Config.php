@@ -94,6 +94,8 @@ class Config
                     ],
                     'hls' => $hls,
                     'groups' => (bool) config('groups.enabled'),
+                    // pf-geo: fork feature, see docs/fork/GEO_FEED.md
+                    'geo' => (bool) config('geo.enabled'),
                 ],
             ];
         });

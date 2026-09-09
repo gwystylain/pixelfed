@@ -121,6 +121,16 @@
                     </router-link>
                 </li>
 
+                <!-- pf-geo: fork feature, see docs/fork/GEO_FEED.md.
+                     A plain anchor, not a router-link: the map is its own
+                     page rather than an SPA route. -->
+                <li v-if="hasPhotoMap" class="nav-item">
+                    <a class="nav-link" href="/discover/map">
+                        <span class="icon text-lighter"><i class="far fa-map-marked-alt"></i></span>
+                        Photo Map
+                    </a>
+                </li>
+
                 <li class="nav-item">
                     <router-link class="nav-link d-flex justify-content-between align-items-center" to="/i/web/direct">
 						<span>
@@ -432,6 +442,8 @@ export default {
             hasLiveStreams: false,
             hasStories: false,
             hasGroups: false,
+            // pf-geo: fork feature, see docs/fork/GEO_FEED.md
+            hasPhotoMap: false,
             showLegalNoticeLink: window.App.config.show_legal_notice_link,
         }
     },
@@ -446,6 +458,8 @@ export default {
         if (window.App.config.features.hasOwnProperty('stories')) {
             this.hasStories = App.config.features.stories;
         }
+        // pf-geo: fork feature, see docs/fork/GEO_FEED.md
+        this.hasPhotoMap = App.config.features.geo === true;
     },
 
     methods: {

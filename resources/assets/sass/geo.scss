@@ -1,0 +1,201 @@
+// Fork feature: geo feed. See docs/fork/GEO_FEED.md
+//
+// Loaded only by the map page and by the composer, so nothing here can
+// affect the rest of the app.
+//
+// Colours are deliberately either semi-transparent or inherited. The dark
+// theme is chosen by cookie and swaps the whole stylesheet rather than
+// toggling a class, so a component that hardcodes ink or paper would be
+// unreadable in one of the two themes.
+
+@import '~leaflet/dist/leaflet.css';
+
+$geo-bar-height: 52px;
+$geo-accent: #10c5f8;
+
+.geo-feed {
+	display: flex;
+	flex-direction: column;
+
+	// Fill the viewport below the app nav without needing to know its exact
+	// height on every breakpoint.
+	height: calc(100vh - 66px);
+	min-height: 420px;
+
+	&__bar {
+		display: flex;
+		align-items: center;
+		flex-shrink: 0;
+		height: $geo-bar-height;
+		padding: 0 1rem;
+		gap: 1rem;
+		background: rgba(127, 127, 127, 0.08);
+		border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+	}
+
+	&__bar-title {
+		flex-shrink: 0;
+	}
+
+	&__bar-status {
+		flex-grow: 1;
+		overflow: hidden;
+		white-space: nowrap;
+		text-overflow: ellipsis;
+	}
+
+	&__bar-actions {
+		flex-shrink: 0;
+	}
+
+	&__map {
+		flex-grow: 1;
+		width: 100%;
+
+		// Tiles are light; a neutral ground stops a flash of page colour
+		// while they load.
+		background: #dfdfdf;
+	}
+}
+
+// Leaflet gives divIcon markers a white background and a border by default.
+.geo-cluster,
+.geo-pin {
+	background: transparent;
+	border: 0;
+}
+
+.geo-cluster {
+	cursor: pointer;
+
+	&__bubble {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 100%;
+		height: 100%;
+		border-radius: 50%;
+		background: rgba($geo-accent, 0.85);
+		border: 2px solid rgba(255, 255, 255, 0.9);
+		box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+		color: #fff;
+		font-weight: 700;
+		font-size: 12px;
+		line-height: 1;
+		transition: transform 0.12s ease-out;
+	}
+
+	&:hover &__bubble {
+		transform: scale(1.08);
+	}
+}
+
+.geo-pin {
+	cursor: pointer;
+
+	&__inner {
+		position: relative;
+		width: 46px;
+		height: 46px;
+		border-radius: 6px;
+		overflow: hidden;
+		border: 2px solid #fff;
+		box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+		background: #cfcfcf;
+		transition: transform 0.12s ease-out;
+	}
+
+	&:hover &__inner {
+		transform: scale(1.1);
+	}
+
+	&__thumb {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		display: block;
+	}
+
+	// A pin is only 46px across, too small for a readable content warning
+	// notice, so a sensitive thumbnail is covered instead. The flat colour
+	// does the hiding on its own; the blur is a nicety where supported.
+	&__cw {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(0, 0, 0, 0.82);
+		backdrop-filter: blur(6px);
+		color: #fff;
+		font-size: 14px;
+	}
+
+	&__count {
+		position: absolute;
+		right: 0;
+		bottom: 0;
+		min-width: 18px;
+		padding: 0 3px;
+		background: rgba(0, 0, 0, 0.75);
+		color: #fff;
+		font-size: 10px;
+		font-weight: 700;
+		line-height: 16px;
+		text-align: center;
+		border-top-left-radius: 4px;
+	}
+}
+
+.geo-popup {
+	.leaflet-popup-content {
+		margin: 8px;
+		width: auto !important;
+	}
+
+	&__body {
+		font-size: 12px;
+	}
+
+	&__place {
+		margin: 0 0 6px;
+		font-weight: 700;
+		font-size: 12px;
+	}
+
+	&__grid {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 3px;
+	}
+
+	&__tile {
+		display: block;
+		position: relative;
+		aspect-ratio: 1;
+		overflow: hidden;
+		border-radius: 3px;
+		background: #cfcfcf;
+
+		img {
+			width: 100%;
+			height: 100%;
+			object-fit: cover;
+			display: block;
+		}
+
+		&--cw img {
+			filter: blur(10px);
+		}
+	}
+
+	&__more {
+		margin: 6px 0 0;
+		text-align: center;
+		opacity: 0.7;
+	}
+}
+
+// The composer's suggestion card keeps its styles in GeoSuggest.vue: it
+// renders inside upstream's compose modal, which loads app.css or spa.css
+// and never this file.

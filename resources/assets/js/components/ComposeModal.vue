@@ -476,6 +476,8 @@
                                 </span>
                             </p>
                         </div>
+                        <!-- pf-geo: fork feature, see docs/fork/GEO_FEED.md -->
+                        <geo-suggest :media="media" :place="place" @select="place = $event" />
                         <div class="border-bottom">
                             <p class="px-4 mb-0 py-2">
                                 <span>Audience</span>
@@ -846,6 +848,8 @@ import '@trevoreyre/autocomplete-vue/dist/style.css'
 import VueTribute from 'vue-tribute'
 import { MediaEditor, MediaEditorPreview, MediaEditorFilterMenu } from 'webgl-media-editor/vue2'
 import { filterEffects } from './filters';
+// pf-geo: fork feature, see docs/fork/GEO_FEED.md
+import GeoSuggest from './../../components/geo/GeoSuggest.vue';
 
 export default {
 
@@ -854,7 +858,9 @@ export default {
         Autocomplete,
         VueTribute,
         MediaEditorPreview,
-        MediaEditorFilterMenu
+        MediaEditorFilterMenu,
+        // pf-geo: fork feature, see docs/fork/GEO_FEED.md
+        'geo-suggest': GeoSuggest
     },
 
     data() {
