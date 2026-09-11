@@ -150,9 +150,11 @@ On the TrueNAS host, from the fork tag — never from `dev`, never from upstream
 
 ```bash
 git clone --branch v0.12.10-fork.1 --depth 1 https://github.com/gwystylain/pixelfed.git src
-cd src && chown -R 33:33 storage bootstrap/cache
-docker build -t local/pixelfed:0.12.10-fork.1 .
+cd src && docker build -t local/pixelfed:0.12.10-fork.1 .
 ```
+
+No `chown` on the clone first: the Dockerfile does `COPY --chown=www-data`
+and a `chown -R` of its own, so host ownership never reaches the image.
 
 Image tag = fork tag without the `v`. Do not `docker rmi` the previous image
 until the new one has been running for a while; it is the rollback.
@@ -419,6 +421,39 @@ Recorded because the next upgrade may look similar.
   are unaffected. (This is the one that would have broken the geo routes —
   GEO_FEED.md.)
 - Nine migrations: five upstream, three geo, one Sanctum table.
+
+### Doing it from the shell instead of the UI
+
+Everything in the upgrade except pasting YAML has a `midclt` equivalent
+(the TrueNAS CLI, one of the three supported ways to change config). This is
+what the 0.12.10-fork.1 upgrade actually used. The custom app's stored
+compose lives at
+`/mnt/.ix-apps/app_configs/pixelfed/versions/<ver>/user_config.yaml`, which
+is the cleanest thing to edit programmatically — it holds the DB passwords,
+so edit it in place on the host rather than copying it anywhere.
+
+```bash
+midclt call -j app.stop pixelfed
+zfs snapshot HDDs/Applications/PixelFed@pre-<tag>
+zfs snapshot SSD/ApplicationsDataset/PixelFed@pre-<tag>
+midclt call -j app.update pixelfed '{"custom_compose_config_string": "<yaml>"}'
+midclt call -j app.start pixelfed
+docker exec ix-pixelfed-app-1 php artisan migrate --force
+```
+
+Two things that cost time the first time:
+
+- The wait-for-job flag is `-j`. `-job` parses as `-j` plus garbage and the
+  command silently does nothing; check `app.query` state after every call
+  rather than trusting the exit status.
+- `app.update` on a stopped app leaves it stopped. `app.start` is a separate
+  step. (Saving in the UI starts it; the API doesn't.)
+- Build the JSON payload with Python and call `midclt` via `subprocess` —
+  the YAML has quotes and colons that shell quoting mangles.
+
+Snapshot **after** the stop. A snapshot of a running MariaDB is
+crash-consistent, which InnoDB recovers from, but there is no reason to
+rely on that when the app is about to be stopped anyway.
 
 ## Rollback
 
