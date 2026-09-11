@@ -7,16 +7,16 @@ use App\Models\User;
 use App\Rules\ValidUsername;
 use App\Services\BouncerService;
 use App\Services\EmailService;
+use App\Services\EmailVerificationService;
+use App\Services\PendingLoginService;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Contracts\View\View;
 use Illuminate\Foundation\Auth\RegistersUsers;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Str;
 use Purify;
 
 class RegisterController extends Controller
@@ -49,13 +49,6 @@ class RegisterController extends Controller
     public function __construct()
     {
         $this->middleware('guest');
-    }
-
-    public function getRegisterToken()
-    {
-        return Cache::remember('pf:register:rt', 900, function () {
-            return Str::random(40);
-        });
     }
 
     /**
@@ -93,18 +86,8 @@ class RegisterController extends Controller
             },
         ];
 
-        $rt = [
-            'required',
-            function ($attribute, $value, $fail) {
-                if ($value !== $this->getRegisterToken()) {
-                    return $fail('Something went wrong');
-                }
-            },
-        ];
-
         $rules = [
             'agecheck' => 'required|accepted',
-            'rt' => $rt,
             'name' => 'nullable|string|max:'.config('pixelfed.max_name_length'),
             'username' => $usernameRules,
             'email' => $emailRules,
@@ -157,10 +140,11 @@ class RegisterController extends Controller
                 $count = User::where(function ($q) {
                     return $q->whereNull('status')->orWhereNotIn('status', ['deleted', 'delete']);
                 })->count();
-                if ($limit <= $count) {
+                // A falsy max_users means "no limit" (matches register() and the
+                // help view). Guard on $limit so 0/null/'' does not redirect.
+                if ($limit && $limit <= $count) {
                     return redirect(route('help.instance-max-users-limit'));
                 }
-                abort_if($limit <= $count, 404);
 
                 return view('auth.register');
             } else {
@@ -177,6 +161,10 @@ class RegisterController extends Controller
 
     /**
      * Handle a registration request for the application.
+     *
+     * When email verification is enforced the new account gets no session.
+     * It is parked on the login verify step, same as an unverified login,
+     * and only gets a session once the confirm link is opened.
      *
      * @return Response
      */
@@ -203,6 +191,13 @@ class RegisterController extends Controller
         $this->validator($request->all())->validate();
 
         event(new Registered($user = $this->create($request->all())));
+
+        if ((bool) config('pixelfed.enforce_email_verification') && is_null($user->email_verified_at)) {
+            PendingLoginService::start($request, $user, false, PendingLoginService::STEP_VERIFY);
+            EmailVerificationService::send($user);
+
+            return redirect()->route('login', ['step' => PendingLoginService::STEP_VERIFY]);
+        }
 
         $this->guard()->login($user);
 

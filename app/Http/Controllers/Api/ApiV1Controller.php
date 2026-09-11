@@ -67,6 +67,7 @@ use App\Services\RelationshipService;
 use App\Services\SanitizeService;
 use App\Services\SnowflakeService;
 use App\Services\StatusService;
+use App\Services\StoryIndexService;
 use App\Services\UserFilterService;
 use App\Services\UserRoleService;
 use App\Services\UserStorageService;
@@ -84,6 +85,8 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Pagination\Cursor;
+use Illuminate\Pagination\CursorPaginator;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
@@ -887,7 +890,7 @@ class ApiV1Controller extends Controller
             $maxId = (int) $request->input('max_id');
 
             if ($maxId > 0) {
-                $query->where('id', '<=', $maxId);
+                $query->where('id', '<', $maxId);
             }
         }
 
@@ -1156,6 +1159,8 @@ class ApiV1Controller extends Controller
         Follower::whereProfileId($user->profile_id)
             ->whereFollowingId($target->id)
             ->delete();
+
+        app(StoryIndexService::class)->removeFollowing((int) $user->profile_id, (int) $target->id);
 
         UnfollowPipeline::dispatch($user->profile_id, $target->id)->onQueue('high');
 
@@ -1563,7 +1568,7 @@ class ApiV1Controller extends Controller
                 return $status['like_id'];
             })->filter();
 
-            $max = $ids->min() - 1;
+            $max = $ids->min();
             $min = $ids->max();
 
             $baseUrl = config('app.url').'/api/v1/favourites?limit='.$limit.'&';
@@ -2166,9 +2171,7 @@ class ApiV1Controller extends Controller
                 break;
         }
 
-        $user->storage_used = (int) $updatedAccountSize;
-        $user->storage_used_updated_at = now();
-        $user->save();
+        UserStorageService::increaseStorageUsed($user->id, $fileSize);
 
         Cache::forget($limitKey);
         $resource = new Fractal\Resource\Item($media, new MediaTransformer);
@@ -2399,9 +2402,7 @@ class ApiV1Controller extends Controller
                 break;
         }
 
-        $user->storage_used = (int) $updatedAccountSize;
-        $user->storage_used_updated_at = now();
-        $user->save();
+        UserStorageService::increaseStorageUsed($user->id, $fileSize);
 
         Cache::forget($limitKey);
         $resource = new Fractal\Resource\Item($media, new MediaTransformer);
@@ -2770,7 +2771,7 @@ class ApiV1Controller extends Controller
                 })
                 ->values();
 
-            $baseUrl = config('app.url').'/api/v1/timelines/home?limit='.$limit.'&';
+            $baseUrl = $napi ? config('app.url').'/api/v1/timelines/home?_pe=1limit='.$limit.'&' : config('app.url').'/api/v1/timelines/home?limit='.$limit.'&';
             $minId = $res->map(function ($s) {
                 return ['id' => $s['id']];
             })->min('id');
@@ -4124,7 +4125,12 @@ class ApiV1Controller extends Controller
             'visibility' => 'public',
         ]);
 
-        SharePipeline::dispatch($share)->onQueue('low');
+        // Only run the share pipeline for a newly-created share; a duplicate
+        // reblog returns the existing row (matches the like-path pattern and
+        // avoids redundant queue work / counter churn).
+        if ($share->wasRecentlyCreated) {
+            SharePipeline::dispatch($share)->onQueue('low');
+        }
 
         StatusService::del($status->id);
         ReblogService::add($user->profile_id, $status->id);
@@ -4647,38 +4653,125 @@ class ApiV1Controller extends Controller
 
         $pid = $request->user()->profile_id;
 
-        $ids = Cache::remember('api:v1.1:discover:accounts:popular', 14400, function () {
+        $pool = Cache::remember('api:v1.1:discover:accounts:popular:pool:v1', 14400, function () {
             return DB::table('profiles')
                 ->where('is_private', false)
                 ->whereNull('status')
-                ->orderByDesc('profiles.followers_count')
-                ->limit(30)
-                ->get();
+                ->orderByDesc('followers_count')
+                ->limit(200)
+                ->pluck('id')
+                ->toArray();
         });
-        $filters = UserFilterService::filters($pid);
-        $asf = AdminShadowFilterService::getHideFromPublicFeedsList();
-        $ids = $ids->map(function ($profile) {
-            return AccountService::get($profile->id, true);
-        })
-            ->filter(function ($profile) {
-                return $profile && isset($profile['id'], $profile['locked']) && ! $profile['locked'];
-            })
-            ->filter(function ($profile) use ($pid) {
-                return $profile['id'] != $pid;
-            })
-            ->filter(function ($profile) use ($pid) {
-                return ! FollowerService::follows($pid, $profile['id'], true);
-            })
-            ->filter(function ($profile) use ($asf) {
-                return ! in_array($profile['id'], $asf);
-            })
-            ->filter(function ($profile) use ($filters) {
-                return ! in_array($profile['id'], $filters);
-            })
+
+        $following = DB::table('followers')
+            ->where('profile_id', $pid)
+            ->whereIn('following_id', $pool)
+            ->pluck('following_id')
+            ->toArray();
+
+        $requested = DB::table('follow_requests')
+            ->where('follower_id', $pid)
+            ->whereIn('following_id', $pool)
+            ->pluck('following_id')
+            ->toArray();
+
+        $exclude = array_flip(array_merge(
+            [$pid],
+            $following,
+            $requested,
+            UserFilterService::filters($pid),
+            AdminShadowFilterService::getHideFromPublicFeedsList()
+        ));
+
+        $res = collect($pool)
+            ->reject(fn ($id) => isset($exclude[$id]))
+            ->take(50)
+            ->map(fn ($id) => AccountService::get($id, true))
+            ->filter()
             ->take(16)
             ->values();
 
-        return $this->json($ids);
+        return $this->json($res);
+    }
+
+    public function discoverAccountsPopularV2(Request $request)
+    {
+        abort_if(! $request->user() || ! $request->user()->token(), 403);
+        abort_unless($request->user()->tokenCan('read'), 403);
+
+        $pid = $request->user()->profile_id;
+        $limit = max(1, min((int) $request->input('limit', 16), 40));
+
+        $cursor = Cursor::fromEncoded($request->input('cursor'));
+        if ($cursor && ! isset($cursor->toArray()['followers_count'], $cursor->toArray()['id'])) {
+            $cursor = null;
+        }
+
+        $pool = Cache::remember('api:v1.1:discover:accounts:popular:pool:v2', 14400, function () {
+            return DB::table('profiles')
+                ->select('id', 'followers_count')
+                ->where('is_private', false)
+                ->whereNull('status')
+                ->orderByDesc('followers_count')
+                ->orderByDesc('id')
+                ->limit(200)
+                ->get()
+                ->map(fn ($p) => [
+                    'id' => (int) $p->id,
+                    'followers_count' => (int) $p->followers_count,
+                ])
+                ->all();
+        });
+
+        $poolIds = array_column($pool, 'id');
+
+        $following = DB::table('followers')
+            ->where('profile_id', $pid)
+            ->whereIn('following_id', $poolIds)
+            ->pluck('following_id')
+            ->all();
+
+        $requested = DB::table('follow_requests')
+            ->where('follower_id', $pid)
+            ->whereIn('following_id', $poolIds)
+            ->pluck('following_id')
+            ->all();
+
+        $exclude = array_flip(array_merge(
+            [$pid],
+            $following,
+            $requested,
+            UserFilterService::filters($pid),
+            AdminShadowFilterService::getHideFromPublicFeedsList()
+        ));
+
+        $candidates = collect($pool)->reject(fn ($p) => isset($exclude[$p['id']]));
+
+        if ($cursor) {
+            [$afterCount, $afterId] = array_map('intval', $cursor->parameters(['followers_count', 'id']));
+            $candidates = $candidates->filter(
+                fn ($p) => $p['followers_count'] < $afterCount
+                    || ($p['followers_count'] === $afterCount && $p['id'] < $afterId)
+            );
+        }
+
+        $paginator = (new CursorPaginator(
+            $candidates->take($limit + 1)->values(),
+            $limit,
+            $cursor,
+            ['path' => $request->url(), 'parameters' => ['followers_count', 'id']]
+        ))->withQueryString();
+
+        $accounts = collect($paginator->items())
+            ->map(fn ($p) => AccountService::get($p['id'], true))
+            ->filter()
+            ->values();
+
+        $headers = $paginator->hasMorePages()
+            ? ['Link' => '<'.$paginator->nextPageUrl().'>; rel="next"']
+            : [];
+
+        return $this->json($accounts)->withHeaders($headers);
     }
 
     /**

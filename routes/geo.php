@@ -20,7 +20,7 @@ use App\Geo\Http\Controllers\GeoLocationController;
 use Illuminate\Support\Facades\Route;
 
 Route::domain(config('pixelfed.domain.app'))
-    ->middleware(['web', 'validemail', 'twofactor', 'localization'])
+    ->middleware(['web', 'localization'])
     ->group(function () {
         Route::get('discover/map', [GeoFeedController::class, 'index'])->name('geo.map');
 
