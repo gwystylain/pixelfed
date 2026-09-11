@@ -5,6 +5,7 @@ namespace App\Geo\Services;
 use App\Geo\Support\Coordinates;
 use App\Services\StatusService;
 use App\Services\UserFilterService;
+use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -230,7 +231,7 @@ class GeoFeedService
      */
     protected function presentPlace($place): ?array
     {
-        if ($place instanceof \Illuminate\Contracts\Support\Arrayable) {
+        if ($place instanceof Arrayable) {
             $place = $place->toArray();
         }
 

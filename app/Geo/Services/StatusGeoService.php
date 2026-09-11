@@ -5,9 +5,9 @@ namespace App\Geo\Services;
 use App\Geo\Support\Coordinates;
 use App\Models\Media;
 use App\Models\Place;
+use App\Models\Status;
 use App\Services\PlaceService;
 use App\Services\StatusService;
-use App\Models\Status;
 
 /**
  * Fork feature: geo feed. See docs/fork/GEO_FEED.md
