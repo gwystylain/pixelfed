@@ -1,0 +1,4 @@
+# Python writes these when a script here is imported rather than run. They
+# are build output, and this whole tree ships to the host inside a fork tag.
+__pycache__/
+*.pyc
