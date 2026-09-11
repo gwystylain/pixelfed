@@ -209,8 +209,10 @@ php artisan route:list | grep -E 'discover/map|api/geo'
 # 4. Tests
 ./vendor/bin/pest tests/Unit/Geo
 
-# 5. Build
-npm install && npm run production
+# 5. Build the frontend and commit it. Plain `npm install` fails on an
+#    upstream peer conflict; the working command, and why, is in
+#    DEPLOY_TRUENAS.md, "Building the frontend".
+npm install --legacy-peer-deps && npm run production
 ```
 
 ### What to re-check when upstream changes specific things
@@ -347,9 +349,13 @@ matters for your instance.
 php artisan migrate
 php artisan import:cities        # only if `places` is empty
 php artisan geo:backfill --places
-npm install && npm run production
 php artisan config:clear
 ```
+
+The compiled frontend is part of the source tree and is built into the
+image, not on the instance — see DEPLOY_TRUENAS.md, "Building the
+frontend". `config:clear` is only needed on installs that don't rebuild
+the config cache at startup.
 
 `geo:backfill --places` pins every existing post that already has a
 `place_id`, which is what makes the map useful on day one rather than after
