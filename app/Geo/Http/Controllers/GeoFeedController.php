@@ -4,7 +4,9 @@ namespace App\Geo\Http\Controllers;
 
 use App\Geo\Services\GeoFeedService;
 use App\Geo\Support\Coordinates;
+use App\Geo\Support\DateWindow;
 use App\Http\Controllers\Controller;
+use App\Services\ProfileService;
 use Illuminate\Http\Request;
 
 /**
@@ -29,6 +31,12 @@ class GeoFeedController extends Controller
 
         return view('geo.index', [
             'title' => __('Photo Map'),
+
+            // The post pane renders upstream's SPA status component, which
+            // reads the viewer off window._sharedData.user. Same payload
+            // layouts/spa.blade.php puts there. See docs/fork/GEO_FEED.md.
+            'geoUser' => ProfileService::get($request->user()->profile_id),
+
             'geoConfig' => [
                 'tileUrl' => config('geo.map.tile_url'),
                 'tileAttribution' => config('geo.map.tile_attribution'),
@@ -38,6 +46,10 @@ class GeoFeedController extends Controller
                 'defaultLat' => (float) config('geo.map.default_lat'),
                 'defaultLng' => (float) config('geo.map.default_lng'),
                 'defaultZoom' => (int) config('geo.map.default_zoom'),
+
+                // Left-hand end of the date slider. Null when the map is
+                // empty, and the slider stands itself down.
+                'oldestDate' => GeoFeedService::oldestPinnedAt(),
             ],
         ]);
     }
@@ -54,6 +66,8 @@ class GeoFeedController extends Controller
             'bbox' => 'required|string|max:128',
             'zoom' => 'required|integer|min:0|max:20',
             'limit' => 'nullable|integer|min:1|max:250',
+            'from' => 'nullable|date_format:Y-m-d',
+            'to' => 'nullable|date_format:Y-m-d',
         ]);
 
         $bbox = $this->parseBbox($request->input('bbox'));
@@ -64,7 +78,8 @@ class GeoFeedController extends Controller
             $bbox,
             (int) $request->input('zoom'),
             $request->user()->profile_id,
-            $request->input('limit') ? (int) $request->input('limit') : null
+            $request->input('limit') ? (int) $request->input('limit') : null,
+            DateWindow::parse($request->input('from'), $request->input('to'))
         ));
     }
 

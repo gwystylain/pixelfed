@@ -3,6 +3,7 @@
 namespace App\Geo\Services;
 
 use App\Geo\Support\Coordinates;
+use App\Geo\Support\DateWindow;
 use App\Services\StatusService;
 use App\Services\UserFilterService;
 use Illuminate\Contracts\Support\Arrayable;
@@ -26,6 +27,8 @@ class GeoFeedService
     const CACHE_PREFIX = 'pf-geo:feed:v1:';
 
     const CACHE_VERSION_KEY = 'pf-geo:feed:v1:version';
+
+    const OLDEST_CACHE_KEY = 'pf-geo:feed:oldest';
 
     /** Upper bound on clusters returned for one viewport. */
     const MAX_CLUSTERS = 400;
@@ -63,12 +66,43 @@ class GeoFeedService
     }
 
     /**
+     * The oldest post the map can show, as `Y-m-d`, or null if there are none.
+     *
+     * The date slider needs a left-hand end, and how far back this instance's
+     * map actually goes is the only honest one: `geo:backfill --places` pins
+     * posts from years before the feature existed, and a fixed "five years"
+     * would either hide them or offer empty years.
+     *
+     * Cached for an hour. It moves when the oldest pinned post is deleted,
+     * and not otherwise. The empty string stands in for "none", because
+     * `Cache::remember` treats a null as a miss and would rerun the scan on
+     * every page load of an instance with nothing on its map.
+     */
+    public static function oldestPinnedAt(): ?string
+    {
+        $oldest = Cache::remember(self::OLDEST_CACHE_KEY, 3600, function () {
+            $value = self::mappableQuery()->min('created_at');
+
+            return $value ? substr((string) $value, 0, 10) : '';
+        });
+
+        return $oldest === '' ? null : $oldest;
+    }
+
+    /**
      * @param  array{0: float, 1: float, 2: float, 3: float}  $bbox  [minLat, minLng, maxLat, maxLng]
      * @return array{mode: string, zoom: int, cell_size: float|null, clusters: list<array<string, mixed>>, posts: list<array<string, mixed>>}
      */
-    public function viewport(array $bbox, int $zoom, ?int $viewerProfileId = null, ?int $limit = null): array
-    {
+    public function viewport(
+        array $bbox,
+        int $zoom,
+        ?int $viewerProfileId = null,
+        ?int $limit = null,
+        ?DateWindow $window = null
+    ): array {
         [$minLat, $minLng, $maxLat, $maxLng] = $bbox;
+
+        $window = $window ?? DateWindow::none();
 
         $zoom = max(0, min(20, $zoom));
         $clustered = $zoom <= (int) config('geo.feed.cluster_max_zoom', 12);
@@ -86,19 +120,20 @@ class GeoFeedService
             round($minLat, 4), round($minLng, 4), round($maxLat, 4), round($maxLng, 4),
             $limit,
             $clustered ? 'all' : ($viewerProfileId ?? 0),
+            $window->cacheKey(),
         ]));
 
         $ttl = (int) config('geo.feed.cache_ttl', 120);
 
         return Cache::remember($cacheKey, $ttl, function () use (
-            $clustered, $minLat, $minLng, $maxLat, $maxLng, $zoom, $viewerProfileId, $limit
+            $clustered, $minLat, $minLng, $maxLat, $maxLng, $zoom, $viewerProfileId, $limit, $window
         ) {
             if ($clustered) {
                 return [
                     'mode' => 'clusters',
                     'zoom' => $zoom,
                     'cell_size' => Coordinates::clusterCellSize($zoom),
-                    'clusters' => $this->clusters($minLat, $minLng, $maxLat, $maxLng, $zoom),
+                    'clusters' => $this->clusters($minLat, $minLng, $maxLat, $maxLng, $zoom, $window),
                     'posts' => [],
                 ];
             }
@@ -108,7 +143,7 @@ class GeoFeedService
                 'zoom' => $zoom,
                 'cell_size' => null,
                 'clusters' => [],
-                'posts' => $this->posts($minLat, $minLng, $maxLat, $maxLng, $viewerProfileId, $limit),
+                'posts' => $this->posts($minLat, $minLng, $maxLat, $maxLng, $viewerProfileId, $limit, $window),
             ];
         });
     }
@@ -116,8 +151,14 @@ class GeoFeedService
     /**
      * @return list<array{lat: float, lng: float, count: int, cover_id: string}>
      */
-    protected function clusters(float $minLat, float $minLng, float $maxLat, float $maxLng, int $zoom): array
-    {
+    protected function clusters(
+        float $minLat,
+        float $minLng,
+        float $maxLat,
+        float $maxLng,
+        int $zoom,
+        DateWindow $window
+    ): array {
         $cell = Coordinates::clusterCellSize($zoom);
 
         // Inlined as a literal rather than bound: MySQL and Postgres disagree
@@ -125,7 +166,7 @@ class GeoFeedService
         // this value is derived from an integer zoom level, never user text.
         $cellSql = sprintf('%.12F', $cell);
 
-        $rows = $this->baseQuery($minLat, $minLng, $maxLat, $maxLng)
+        $rows = $this->baseQuery($minLat, $minLng, $maxLat, $maxLng, $window)
             ->selectRaw("FLOOR(geo_lat / {$cellSql}) as cell_lat")
             ->selectRaw("FLOOR(geo_lng / {$cellSql}) as cell_lng")
             ->selectRaw('COUNT(*) as total')
@@ -154,11 +195,12 @@ class GeoFeedService
         float $maxLat,
         float $maxLng,
         ?int $viewerProfileId,
-        int $limit
+        int $limit,
+        DateWindow $window
     ): array {
         $filtered = $viewerProfileId ? UserFilterService::filters($viewerProfileId) : [];
 
-        $query = $this->baseQuery($minLat, $minLng, $maxLat, $maxLng)
+        $query = $this->baseQuery($minLat, $minLng, $maxLat, $maxLng, $window)
             ->select('id', 'profile_id', 'geo_lat', 'geo_lng', 'geo_precision');
 
         // Small block lists filter in SQL. A viewer with hundreds of blocks
@@ -252,17 +294,15 @@ class GeoFeedService
     /**
      * Everything the map is allowed to show, before grouping or paging.
      */
-    protected function baseQuery(float $minLat, float $minLng, float $maxLat, float $maxLng): Builder
-    {
-        $query = DB::table('statuses')
-            ->whereNotNull('geo_lat')
-            ->whereNotNull('geo_lng')
-            ->whereBetween('geo_lat', [$minLat, $maxLat])
-            ->whereIn('type', StatusGeoService::MAPPABLE_TYPES)
-            ->whereNull('in_reply_to_id')
-            ->whereNull('reblog_of_id')
-            ->whereNull('deleted_at')
-            ->where('scope', 'public');
+    protected function baseQuery(
+        float $minLat,
+        float $minLng,
+        float $maxLat,
+        float $maxLng,
+        ?DateWindow $window = null
+    ): Builder {
+        $query = self::mappableQuery()
+            ->whereBetween('geo_lat', [$minLat, $maxLat]);
 
         // Panning past the antimeridian splits the box in two.
         if ($minLng > $maxLng) {
@@ -272,6 +312,39 @@ class GeoFeedService
         } else {
             $query->whereBetween('geo_lng', [$minLng, $maxLng]);
         }
+
+        // The viewer's own range, on top of the instance ceiling above —
+        // `max_age_days` is a limit, not a default, so a request for a wider
+        // window cannot widen it.
+        if ($window !== null && $window->from !== null) {
+            $query->where('created_at', '>=', $window->from);
+        }
+
+        if ($window !== null && $window->to !== null) {
+            $query->where('created_at', '<=', $window->to);
+        }
+
+        return $query;
+    }
+
+    /**
+     * The non-spatial half of `baseQuery`: which posts this instance puts on
+     * its map at all, independent of viewport or date range.
+     *
+     * Split out so the slider's left-hand end is derived from exactly the
+     * same set of posts the map draws — an oldest date pointing at a post the
+     * map would never show is a slider with a dead end on it.
+     */
+    protected static function mappableQuery(): Builder
+    {
+        $query = DB::table('statuses')
+            ->whereNotNull('geo_lat')
+            ->whereNotNull('geo_lng')
+            ->whereIn('type', StatusGeoService::MAPPABLE_TYPES)
+            ->whereNull('in_reply_to_id')
+            ->whereNull('reblog_of_id')
+            ->whereNull('deleted_at')
+            ->where('scope', 'public');
 
         if (config('instance.hide_nsfw_on_public_feeds')) {
             $query->where('is_nsfw', false);

@@ -1,7 +1,8 @@
 # Geo feed
 
 A map of posts, built on GPS coordinates read from uploaded photos, with the
-nearest city suggested at compose time.
+nearest city suggested at compose time, and any post on it openable beside the
+map without leaving the page.
 
 This is a **fork feature**. It is not upstream Pixelfed and never will be
 unless it is proposed there separately. It is built to survive rebases onto
@@ -14,6 +15,8 @@ handful of upstream files it does touch are listed exhaustively below.
 
 - [What it does](#what-it-does)
 - [Design decisions](#design-decisions)
+- [The post pane](#the-post-pane)
+- [The date filter](#the-date-filter)
 - [Fork patch inventory](#fork-patch-inventory) ← **read this before rebasing**
 - [Rebase procedure](#rebase-procedure)
 - [Architecture](#architecture)
@@ -35,6 +38,13 @@ handful of upstream files it does touch are listed exhaustively below.
    API client behave the same way with no client changes.
 3. **Serves a map.** `/discover/map` shows public photo posts as pins,
    clustered when zoomed out.
+4. **Opens a post beside the map.** Clicking a pin splits the page: map on one
+   side, the post on the other. It is upstream's own feed components in there,
+   so it can be liked, commented on, shared, bookmarked, reported or edited
+   exactly as it could in the feed, and the map stays where it was.
+5. **Filters by date.** A two-handled slider in the bar, spanning the oldest
+   post on the map to today, with presets for the last 30 days, 6 months and
+   year.
 
 ## Design decisions
 
@@ -100,6 +110,222 @@ ends with `Route::get('{username}', ...)`, a single-segment catch-all, and a
 two-segment path cannot be shadowed by it — so the routes resolve correctly no
 matter which order the service providers boot in.
 
+The bill for this choice comes due in [The post pane](#the-post-pane): the page
+has to supply two things the SPA would have provided. It is still the cheaper
+side of the trade — that plumbing lives entirely in fork-owned files, where a
+component registry entry would not.
+
+---
+
+## The post pane
+
+### It renders upstream's components, not a copy of them
+
+A post opened from a pin has to behave like a post in the feed: same reaction
+bar, same comment thread with replies and mentions, same context menu, same
+report and edit dialogs. The only way to be sure of that — this release and
+every release after it — is to render the same components. So the pane mounts
+upstream's `TimelineStatus.vue`, `ContextMenu.vue`, `LikeModal.vue`,
+`ShareModal.vue`, `ReportPost.vue` and `PostEditModal.vue` directly, and its own
+file is little more than the event wiring around them.
+
+That wiring is the **union** of what upstream's `Post.vue` and `Timeline.vue`
+handle. Neither listens for everything `TimelineStatus` and `ContextMenu` emit —
+`Post.vue` ignores `handle-report` and `mod-tools`, `Timeline.vue` ignores
+`pinned`/`unpinned` — and an unhandled emit is a menu item that silently does
+nothing, so the union is the only safe set.
+
+### What the components need, and where it comes from
+
+They are SPA components, and they reach for three things a Blade page has not
+got:
+
+| Reach | Used for |
+|---|---|
+| `this.$store` | `state.hideCounts`, `state.fixedHeight`, `state.autoloadComments`, `state.newReactions`; getters `getRelationship`, `getCustomEmoji`; mutation `updateRelationship` |
+| `this.$router` | `push()`, always to a profile or a permalink; `currentRoute.name`; `$route.params` |
+| Global components | `PostContent.vue` resolves `<photo-presenter>` and the three album presenters globally, the way `spa.js` registers them |
+
+`resources/assets/js/geo/spa-bridge.js` supplies both, on `Vue.prototype` —
+`App.boot()` in `app.js` creates this page's Vue root and there is no way to
+hand it a `store` option without editing that file.
+
+- **Store.** The subset of `spa.js`'s store these components read, off the same
+  `pf_m2s.*` localStorage keys, so a viewer who turned counts off in the feed
+  sees them off here. `spa.js`'s `set*` mutations and `setColorScheme` are
+  deliberately absent: nothing on this page can reach the settings UI, and
+  `setColorScheme` rewrites `document.body.className`, which here belongs to the
+  layout.
+- **Router.** A shim whose `push()` is `window.location.href`. Every push in
+  these components leaves the page anyway, so a real navigation is the correct
+  behaviour rather than a fallback. `currentRoute` and `$route.params` are
+  present and empty, which is what `ContextMenu` and `PostEditModal` read them
+  for: "are we already on the permalink?" — on the map, never.
+- **Presenters.** `resources/assets/js/geo/post-presenters.js` repeats spa.js's
+  media registrations. Vue 2 does not walk up the parent chain to resolve a
+  component, so registering them on the pane would not reach `PostContent.vue`
+  two levels down — they have to be global here too. It is imported from
+  `GeoPostPane.vue`, so they land in the pane's chunk rather than the map's.
+  Miss this and every photo in the pane is a silent blank: the tag resolves to
+  nothing and Vue only warns.
+
+No library is new to the page for this. Vue, Vuex, bootstrap-vue, vue-timeago,
+vue-blurhash, vue-carousel and vue-infinite-loading are all in `vendor.js`,
+which every page loads, and `components.js` has already installed the plugins.
+The pane's own code is a separate chunk, so a viewer who only browses the map
+never fetches it.
+
+### Styles
+
+The post components colour themselves from custom properties — `--card-bg`,
+`--comment-bg`, `--border-color` and twenty more — that **only `spa.css`
+declares**. `app.css` has none of them. So `resources/views/geo/index.blade.php`
+loads `spa.css` ahead of `geo.css`.
+
+`spa.css` chooses its light or dark set from `prefers-color-scheme`, but this
+page was themed by the `dark-mode` cookie in `layouts/app.blade.php`. Left
+alone, a viewer on a light instance with a dark OS gets a dark post card on a
+light page. The view therefore adds `force-light-mode` or `force-dark-mode` to
+`<html>` from the same cookie; `spa.scss` declares those classes after the media
+query, so they win on source order.
+
+Side effect, accepted: the map page's own chrome picks up `spa.css`'s body font
+and background. It is the modern UI's stylesheet and the page looks more like
+the rest of the app for it.
+
+### The split itself
+
+- Map and pane are flex **siblings**, not an overlay, so opening the pane
+  genuinely shrinks the map. Leaflet is told with `invalidateSize()`, then the
+  clicked pin is panned into what is left of the viewport. There is no width
+  transition on purpose: a mid-animation `invalidateSize()` measures the wrong
+  size.
+- Pins with one post open the pane on click. Pins with several keep the popup as
+  the picker — at city precision one pin can hold a whole town — and a thumbnail
+  opens the pane. The popup's tiles keep their real `href`, so a middle click or
+  a long press still gets the permalink.
+- The pane carries prev/next across the posts at its pin, which is why the
+  gallery is passed in rather than refetched.
+- The open post is in the URL as `?post=<id>`, pushed with `history.pushState`,
+  so it is linkable and Back closes the pane. Prev/next *replaces* instead:
+  walking a pin's posts should not make Back a dozen presses. The id is checked
+  against `/^[0-9]+$/` before it reaches an API path.
+- Deleting, archiving or unlisting a post removes its pin client-side rather
+  than refetching. Viewports are cached per viewer for `geo.feed.cache_ttl`
+  seconds, so a refetch would hand the same pin straight back.
+- Under 768px there is no useful side-by-side, so the split stacks: map on top
+  at 38%, post below, and a button in the pane hides the map altogether. That
+  state overlays rather than resizes, so Leaflet needs telling nothing and the
+  map is exactly where it was on the way back.
+
+---
+
+## The date filter
+
+### The slider spans the data, not a fixed window
+
+Its left-hand end is `MIN(created_at)` over exactly the set of posts the map
+draws — `GeoFeedService::mappableQuery()`, the non-spatial half of the viewport
+query, which is why that half is split out. A fixed "last five years" would be
+wrong in both directions on a real instance: `geo:backfill --places` pins posts
+from years before this feature existed, so a fixed window either hides them or
+offers years of empty track.
+
+That costs one `MIN()` per page load, cached for an hour. It only moves when
+the oldest pinned post is deleted. `Cache::remember` treats a null as a miss,
+so "no pinned posts" is cached as an empty string instead — otherwise an
+instance with an empty map rescans on every page load, which is the one case
+where the scan is pure waste.
+
+When there are no pinned posts at all the control is not rendered. A slider
+with no honest end to it is worse than no slider.
+
+### Handles are day offsets; the wire format is calendar days
+
+The slider works in integers — days since the oldest post — because that is
+what two `<input type="range">` elements can carry. It sends `from` and `to` as
+`Y-m-d`, and `App\Geo\Support\DateWindow` turns those back into an inclusive
+range: `from` at 00:00:00, `to` at 23:59:59. Somebody who drags to 1 March
+means the photographs taken on 1 March.
+
+A handle parked at the end of its track sends **no parameter at all** rather
+than the oldest date or today. Two reasons:
+
+- The default range then asks the API exactly what it asked before this filter
+  existed, down to the cache key, so nothing regresses for a viewer who never
+  touches the slider.
+- The oldest date is a UTC calendar day, and the slider computes in the
+  viewer's local one. At the extremes those can disagree by a day, and "no
+  bound" cannot be off by a day.
+
+`DateWindow` also owns the cache key, in the same class as the parsing. Two
+requests for the same range must land on the same cached viewport, which means
+"the same range" has to mean the same thing to the key as it does to the query.
+It swaps a reversed range rather than returning an empty map, and reads an
+unparseable date as absent — the controller has already rejected malformed
+input with a 422 by then, so anything reaching it has been through validation.
+
+`tests/Unit/Geo/DateWindowTest.php` covers all of that without a database,
+which is the reason the parsing is a value object rather than four lines in the
+controller.
+
+### Two native range inputs, no slider library
+
+The control is two `<input type="range">` elements stacked on one track, not a
+dependency. `vue-slider-component` and friends are each a package, a build, a
+peer-dependency argument with `--legacy-peer-deps`, and a thing to re-check on
+every upstream bump — for a control that is two inputs and thirty lines of CSS.
+Keyboard support and touch targets come free with the native element, which is
+most of what a library would have been bought for.
+
+What it costs is one piece of CSS cunning: the inputs are `pointer-events:
+none` so neither shadows the other, with `pointer-events: auto` on both thumb
+pseudo-elements so the thumbs still take a drag. If a browser ever declines
+that on `::-moz-range-thumb`, the fallbacks are already there — clicking the
+bare track moves the nearer handle (`onTrackClick`, standard slider behaviour
+in its own right), the handles still take arrow keys, and the presets never
+needed the slider at all.
+
+Handles **push** rather than block. Blocking leaves whichever input is on top
+unable to move when the two sit on the same day, which on a range input they
+regularly do; pushing can never strand either of them.
+
+The fill between the handles is positioned inline, in `calc()`, inset by half a
+handle width at each end — that is where a range input puts the centre of its
+thumb at the extremes, and without the inset the fill drifts off the handles.
+`HANDLE_PX` in `GeoFeed.vue` and `$geo-handle` in `geo.scss` are the same
+number in two places; change one and the fill stops lining up.
+
+### In the bar, wrapping rather than hiding
+
+`.geo-feed__bar` wraps. On a wide screen the whole filter sits on the line with
+the title and the "near me" button; narrower, it drops to a line of its own;
+under 768px it becomes two, with the dates and presets together and the slider
+full width below them. A 140px dual-range spanning several years is not a touch
+target — a full width one is. Nothing is hidden at any size: the presets are
+the point of the control on a phone, and the slider is still there.
+
+### It does not survive a reload
+
+Deliberately. A remembered range is either absolute — so "last 30 days" chosen
+three weeks ago silently means a month-old window today — or relative, which
+means storing which preset was active and recomputing, and then a dragged range
+cannot be stored at all. Neither is worth the confusion of landing on a map
+that looks empty. The filter resets to All, which is the whole map.
+
+### `max_age_days` is a ceiling, not a default
+
+`geo.feed.max_age_days` still applies underneath, so an instance that caps its
+map at 90 days cannot be widened by asking for a year. It also bounds the
+slider's left-hand end, because it is part of `mappableQuery()`.
+
+### Clusters cache per window
+
+Cluster counts cache globally rather than per viewer, and the window is now
+part of that key. Presets produce identical windows for everybody, so they
+still share a cache entry; a hand-dragged range gets its own. Preset windows
+end today, so their keys turn over daily.
+
 ---
 
 ## Fork patch inventory
@@ -111,12 +337,16 @@ app/Geo/**                                       the whole feature
 config/geo.php                                   configuration
 routes/geo.php                                   routes
 database/migrations/2026_09_09_1000*.php         three additive migrations
-resources/assets/components/geo/GeoFeed.vue      the map
+resources/assets/components/geo/GeoFeed.vue      the map and the split view
+resources/assets/components/geo/GeoPostPane.vue  a post beside the map
 resources/assets/components/geo/GeoSuggest.vue   composer suggestion card
 resources/assets/js/geo.js                       bundle entry point
+resources/assets/js/geo/spa-bridge.js            store + $router for the pane
+resources/assets/js/geo/post-presenters.js       global media registrations
 resources/assets/sass/geo.scss                   map styles + Leaflet CSS
 resources/views/geo/index.blade.php              the map page
-tests/Unit/Geo/**                                tests
+tests/Unit/Geo/**                                Coordinates, ExifGpsReader,
+                                                 DateWindow
 docs/fork/GEO_FEED.md                            this file
 ```
 
@@ -127,6 +357,10 @@ Every insertion is marked with a `pf-geo:` comment, so
 `package.json`, is JSON and cannot carry a comment, so check it by hand.
 
 Eight files, ~50 inserted lines, nothing removed or rewritten.
+
+The split view added none of them. It renders six upstream components and
+loads `spa.css`, but it *imports* and *links* them from fork-owned files — the
+count above is the same as it was before the pane existed.
 
 | File | Change | If the rebase eats it |
 |---|---|---|
@@ -199,6 +433,16 @@ Then verify:
 # 1. Insertion points still present (expect 12 hits across 7 files)
 git grep -n 'pf-geo:'
 
+# 1b. Everything the post pane imports from upstream still exists, and
+#     `$store`/`$router` are still all it reaches for
+ls resources/assets/components/partials/TimelineStatus.vue    resources/assets/components/partials/StatusPlaceholder.vue    resources/assets/components/partials/post/{ContextMenu,LikeModal,ShareModal,PostEditModal}.vue    resources/assets/components/partials/modal/ReportPost.vue
+grep -rho '\$store\.state\.[a-zA-Z]*\|commit(.[a-zA-Z]*\|\$router\.[a-zA-Z]*'   resources/assets/components/partials/TimelineStatus.vue   resources/assets/components/partials/post resources/assets/components/partials/profile   | sort -u
+
+# 1c. Any component tag in the pane's tree that is neither registered locally,
+#     provided by a plugin (b-*, timeago, carousel, infinite-loading), nor in
+#     post-presenters.js needs adding there — it renders as nothing otherwise.
+grep -rhoE '<[a-z]+-[a-z-]+' resources/assets/components/partials/post   resources/assets/components/partials/TimelineStatus.vue   resources/assets/components/presenter | sort -u
+
 # 2. The provider is registered, and leaflet is still a dependency
 grep -n 'GeoServiceProvider' bootstrap/providers.php
 grep -n 'leaflet' package.json
@@ -230,6 +474,14 @@ consequence if the assumption breaks:
 | `UserFilterService::filters()` returns blocked/muted profile ids | `GeoFeedService::posts` | Blocked accounts become visible on the map. |
 | `StatusService::get()` returns `media_attachments` and `account` | `GeoFeedService::preview` | Pins vanish (previews are skipped, not fatal). |
 | The composer keeps `media` and `place` on its root component | `ComposeModal.vue` insertion | Suggestion card stops appearing. |
+| `window._sharedData.user` is the viewer's `ProfileService` payload | `GeoFeedController::index`, every post component | Comment box, owner checks and admin tools in the pane break. |
+| `$store.state` keys the post components read are the four in [The post pane](#the-post-pane) | `spa-bridge.js` | A newly added key reads `undefined`, so it behaves as off. Degrades, does not throw. |
+| Mutations the post components commit are `updateRelationship` and `updateCustomEmoji` | `spa-bridge.js` | Vuex logs "unknown mutation type" and carries on. |
+| Every `$router.push` in the post components targets another page | `spa-bridge.js` | A push meant to stay in-page becomes a full navigation off the map. |
+| `spa.css` declares the post card's custom properties, and `.force-*-mode` after the `prefers-color-scheme` block | `geo/index.blade.php` | Post card loses its colours, or ignores the page's light/dark choice. |
+| `TimelineStatus` and `ContextMenu` emit no events beyond the ones `GeoPostPane` binds | `GeoPostPane.vue` | A new emit is a button in the pane that silently does nothing. |
+| The only components the pane's tree resolves globally are the five in `post-presenters.js` | `post-presenters.js` | A new global tag renders as nothing — no error, just missing UI. The scan in the rebase procedure finds these. |
+| `/api/pixelfed/v1/statuses/{id}` and `/api/v2/statuses/{id}/state` answer a session | `GeoPostPane.vue` | Pane shows "Cannot show this post" for everything. |
 
 If a new upload path appears upstream that does **not** go through the `Media`
 model, it will need its own hook.
@@ -257,9 +509,16 @@ publish
   │                                          ├─ ReverseGeocoder → place_id
   │                                          └─ statuses.geo_lat / geo_lng
   │
-map ─ GET /api/geo/v1/feed?bbox=&zoom= ──▶ GeoFeedService
-                                             ├─ zoom ≤ 12: SQL grid clusters
-                                             └─ zoom > 12: posts + previews
+map ─ GET /api/geo/v1/feed?bbox=&zoom=&from=&to= ──▶ GeoFeedService
+  │                                          ├─ zoom ≤ 12: SQL grid clusters
+  │                                          └─ zoom > 12: posts + previews
+  │
+  └─ click a pin ─▶ GeoPostPane ─ GET /api/pixelfed/v1/statuses/:id
+                       │          GET /api/pixelfed/v1/accounts/relationships
+                       │          GET /api/v2/statuses/:id/state
+                       │
+                       └─ upstream TimelineStatus.vue + context menu + modals
+                            └─ store and $router from geo/spa-bridge.js
 ```
 
 Both publish triggers exist deliberately. `Status::updated` fires at exactly
@@ -322,7 +581,7 @@ All keys live in `config/geo.php`; the env vars are documented in
 | `geo.feed.cluster_max_zoom` | `12` | Below this zoom, results are grid clusters. |
 | `geo.feed.max_results` | `250` | Pins per viewport. |
 | `geo.feed.cache_ttl` | `120` | Seconds to cache a viewport. |
-| `geo.feed.max_age_days` | `0` | `0` = no limit. |
+| `geo.feed.max_age_days` | `0` | `0` = no limit. A ceiling on the date filter, and on the left-hand end of its slider. |
 | `geo.map.tile_url` | OSM | Any `{z}/{x}/{y}` tile server. |
 
 ### `geo.exif.inline`
@@ -402,7 +661,13 @@ All endpoints require an authenticated session and are under
 ?bbox=minLng,minLat,maxLng,maxLat   required
 &zoom=0..20                         required
 &limit=1..250                       optional
+&from=YYYY-MM-DD                    optional, inclusive from 00:00:00
+&to=YYYY-MM-DD                      optional, inclusive to 23:59:59
 ```
+
+`from` and `to` are independent: either, both or neither. A reversed pair is
+read as the range it obviously means. Both are applied under
+`geo.feed.max_age_days`, which they cannot widen.
 
 Returns clusters at or below `geo.feed.cluster_max_zoom`, individual posts
 above it:
@@ -473,6 +738,25 @@ Not covered by automated tests, and worth checking by hand after a rebase:
 - Publish from a mobile app with no location set; the post gets one anyway.
 - `/discover/map` clusters when zoomed out and shows pins when zoomed in.
 - A blocked account's posts do not appear on the map.
+- A pin holding one post opens it in the pane on click; the map shrinks and
+  pans so the pin is still visible, and the pin is ringed.
+- A pin holding several opens the popup; a thumbnail opens the pane, and
+  prev/next walks the rest of them.
+- In the pane: like, share, bookmark, post a comment, reply to one, open the
+  likes and shares lists, the context menu, report, and — on your own post —
+  edit and delete. A deleted post's pin disappears without a reload.
+- `?post=<id>` opens straight into a post; Back closes the pane; Escape closes
+  the pane but closes an open modal first.
+- Under 768px the map keeps the top of the screen and the expand button in the
+  pane hides it; the map is unmoved on the way back.
+- Both themes: set and clear the dark-mode cookie and check the post card
+  follows the page rather than the OS.
+- Date filter: each preset narrows the map and highlights itself; All restores
+  it. Drag either handle — the label follows, the highlight clears, and the
+  handles push rather than block when they meet. Click the bare track: the
+  near handle moves. Tab to a handle and use the arrow keys.
+- A range with nothing in it says so, rather than reading as an empty map.
+- With the filter at All, the request carries no `from` or `to` at all.
 
 `ReverseGeocoder` and `GeoFeedService` are database-bound and untested; the
 repository has no fixtures for a seeded `places` table.
@@ -495,5 +779,25 @@ repository has no fixtures for a seeded `places` table.
   behaviour and nothing more.
 - **No admin UI.** Configuration is env vars only; there is no panel in
   `/i/admin`.
+- **The pane's own strings follow the classic pages' locales.** `App.boot()` in
+  `app.js` builds its i18n from `en`, `pt` and `ja`; the SPA carries twenty.
+  A viewer whose locale is neither of the three reads the pane's menus in
+  English while the feed shows them translated. Widening it means either
+  editing `app.js` — an upstream file — or bundling the locale set a second
+  time.
+- **Prev/next stops at the pin.** There is no "next post on the map"; the
+  gallery is the posts sharing one coordinate and nothing more.
+- **Cluster counts ignore the date filter's cache generation.** They are keyed
+  by window, so they are correct — but a narrow hand-dragged range is a cache
+  entry only that viewer will ever read, for `geo.feed.cache_ttl` seconds.
+- **The date filter resets on reload.** See [The date filter](#the-date-filter)
+  for why that is a choice rather than an omission.
+- **Month arithmetic overflows rather than clamps.** "6 months" back from
+  31 August is 3 March, because that is what `Date.setMonth` does. Invisible
+  at the scale the slider works at.
+- **`mix.extract()` puts Leaflet in `vendor.js`.** The dynamic import in
+  `GeoFeed.vue` keeps the module from being *evaluated* on pages with no map,
+  but the bytes are in the bundle every page loads. Only the post pane is a
+  genuinely separate chunk, because it is app code rather than a package.
 - **Author edits to precision after publishing** re-derive the pin, but the
   composer only offers that control before publishing.

@@ -12,6 +12,12 @@
 
 $geo-bar-height: 52px;
 $geo-accent: #10c5f8;
+$geo-hairline: 1px solid rgba(127, 127, 127, 0.2);
+
+// Slider handle. Mirrored by HANDLE_PX in GeoFeed.vue, which positions the
+// fill between the two handles and needs the same number to line up.
+$geo-handle: 14px;
+$geo-handle-half: 7px;
 
 .geo-feed {
 	display: flex;
@@ -22,15 +28,19 @@ $geo-accent: #10c5f8;
 	height: calc(100vh - 66px);
 	min-height: 420px;
 
+	// Wraps rather than scrolls or hides: on a wide screen the date filter
+	// sits on the same line, and on a narrow one it takes a line of its own
+	// without any of it becoming unreachable.
 	&__bar {
 		display: flex;
 		align-items: center;
 		flex-shrink: 0;
-		height: $geo-bar-height;
-		padding: 0 1rem;
-		gap: 1rem;
+		flex-wrap: wrap;
+		min-height: $geo-bar-height;
+		padding: 0.3rem 1rem;
+		gap: 0.4rem 1rem;
 		background: rgba(127, 127, 127, 0.08);
-		border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+		border-bottom: $geo-hairline;
 	}
 
 	&__bar-title {
@@ -38,7 +48,8 @@ $geo-accent: #10c5f8;
 	}
 
 	&__bar-status {
-		flex-grow: 1;
+		flex: 1 1 auto;
+		min-width: 0;
 		overflow: hidden;
 		white-space: nowrap;
 		text-overflow: ellipsis;
@@ -48,13 +59,301 @@ $geo-accent: #10c5f8;
 		flex-shrink: 0;
 	}
 
-	&__map {
+	// Map and post pane. A row on anything wide enough to hold both, stacked
+	// below that. `position: relative` anchors the pane when it takes the
+	// whole page on a phone.
+	&__body {
+		position: relative;
+		display: flex;
 		flex-grow: 1;
-		width: 100%;
+
+		// Without this a flex item refuses to shrink below its content, and
+		// the map's tile layer is as wide as the world.
+		min-height: 0;
+		min-width: 0;
+	}
+
+	&__map {
+		flex: 1 1 auto;
+		min-height: 0;
+		min-width: 0;
 
 		// Tiles are light; a neutral ground stops a flash of page colour
 		// while they load.
 		background: #dfdfdf;
+	}
+
+	// Wide enough for the post card to read the way it does in the feed,
+	// which is the whole point of opening it here rather than navigating.
+	&__pane {
+		flex: 0 0 420px;
+		min-height: 0;
+		min-width: 0;
+		border-left: $geo-hairline;
+		background: rgba(127, 127, 127, 0.04);
+
+		// A flex container, so the pane inside it gets a definite height to
+		// scroll within without depending on percentage resolution.
+		display: flex;
+
+		@media (min-width: 992px) {
+			flex-basis: 480px;
+		}
+
+		@media (min-width: 1200px) {
+			flex-basis: 540px;
+		}
+	}
+
+	// A phone cannot split usefully side by side, so stack: enough map to keep
+	// your bearings, the rest for the post.
+	@media (max-width: 767.98px) {
+		&__body {
+			flex-direction: column;
+		}
+
+		&__pane {
+			flex: 1 1 0;
+			border-left: 0;
+			border-top: $geo-hairline;
+		}
+	}
+
+	&--pane-open {
+		@media (max-width: 767.98px) {
+			.geo-feed__map {
+				flex: 0 0 38%;
+			}
+		}
+	}
+
+	// Reading a caption or writing a comment on a phone wants the screen. The
+	// pane covers the map rather than resizing it, so Leaflet needs telling
+	// nothing and the map is exactly where it was on the way back.
+	&--pane-full {
+		@media (max-width: 767.98px) {
+			.geo-feed__pane {
+				position: absolute;
+				inset: 0;
+
+				// Above Leaflet's panes and controls, below Bootstrap's modals:
+				// the post's own dialogs still open over this.
+				z-index: 900;
+				border-top: 0;
+			}
+		}
+	}
+}
+
+// Date range filter in the bar: two handles on one track, plus presets.
+.geo-dates {
+	display: flex;
+	align-items: center;
+	flex-shrink: 0;
+	gap: 0.5rem;
+
+	// Below md the bar has wrapped and this has lines of its own. Two of
+	// them: dates and presets on the first, the slider full width beneath.
+	// A 140px dual-range spanning years is not a touch target; a full width
+	// one is.
+	@media (max-width: 767.98px) {
+		flex: 1 1 100%;
+		flex-wrap: wrap;
+		row-gap: 0.35rem;
+	}
+
+	&__slider {
+		position: relative;
+		flex: 0 0 170px;
+		height: 20px;
+		cursor: pointer;
+
+		@media (max-width: 767.98px) {
+			order: 2;
+			flex: 1 1 100%;
+		}
+	}
+
+	&__track,
+	&__fill {
+		position: absolute;
+		top: 50%;
+		height: 4px;
+		border-radius: 2px;
+		transform: translateY(-50%);
+		pointer-events: none;
+	}
+
+	// Inset by half a handle at each end, which is where a range input puts
+	// the centre of its thumb at the extremes of its value.
+	&__track {
+		left: $geo-handle-half;
+		right: $geo-handle-half;
+		background: rgba(127, 127, 127, 0.35);
+	}
+
+	// `left` and `right` are set inline: they follow the handles.
+	&__fill {
+		background: $geo-accent;
+	}
+
+	// Two range inputs stacked over one track. The inputs are transparent to
+	// the pointer so neither shadows the other; only the thumbs take a drag.
+	// A click anywhere else on the track reaches the container, which moves
+	// the nearer handle — so the control still works if a browser declines
+	// to honour pointer-events on a thumb pseudo-element.
+	&__handle {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		margin: 0;
+		padding: 0;
+		background: none;
+		border: 0;
+		pointer-events: none;
+		-webkit-appearance: none;
+		-moz-appearance: none;
+		appearance: none;
+
+		&:focus {
+			outline: none;
+		}
+
+		&::-webkit-slider-runnable-track {
+			background: transparent;
+			border: 0;
+		}
+
+		&::-moz-range-track {
+			background: transparent;
+			border: 0;
+		}
+
+		&::-webkit-slider-thumb {
+			-webkit-appearance: none;
+			appearance: none;
+			pointer-events: auto;
+			width: $geo-handle;
+			height: $geo-handle;
+			border-radius: 50%;
+			border: 2px solid #fff;
+			background: $geo-accent;
+			box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+			cursor: grab;
+		}
+
+		&::-moz-range-thumb {
+			pointer-events: auto;
+			width: $geo-handle;
+			height: $geo-handle;
+			box-sizing: border-box;
+			border-radius: 50%;
+			border: 2px solid #fff;
+			background: $geo-accent;
+			box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+			cursor: grab;
+		}
+
+		// Keyboard focus has to be visible: the handles are the only way to
+		// set a range that is not one of the presets.
+		&:focus-visible::-webkit-slider-thumb {
+			box-shadow: 0 0 0 3px rgba($geo-accent, 0.5);
+		}
+
+		&:focus-visible::-moz-range-thumb {
+			box-shadow: 0 0 0 3px rgba($geo-accent, 0.5);
+		}
+	}
+
+	&__label {
+		flex-shrink: 0;
+		white-space: nowrap;
+
+		// Stops the label reflowing the bar as the digits change under a drag.
+		font-variant-numeric: tabular-nums;
+
+		@media (max-width: 767.98px) {
+			order: 1;
+		}
+	}
+
+	&__presets {
+		flex-shrink: 0;
+
+		@media (max-width: 767.98px) {
+			order: 1;
+			margin-left: auto;
+		}
+
+		// Bootstrap's small button is taller than it needs to be beside a
+		// 20px slider, and four of them have to fit next to everything else.
+		.btn {
+			padding: 0.15rem 0.4rem;
+			font-size: 11px;
+			font-weight: 700;
+			line-height: 1.45;
+		}
+	}
+}
+
+// One post, opened from a pin, beside the map.
+.geo-pane {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-height: 0;
+	min-width: 0;
+
+	&__bar {
+		display: flex;
+		align-items: center;
+		flex-shrink: 0;
+		height: $geo-bar-height;
+		padding: 0 0.25rem;
+		border-bottom: $geo-hairline;
+		background: rgba(127, 127, 127, 0.04);
+	}
+
+	&__bar-nav {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-grow: 1;
+		gap: 0.25rem;
+		overflow: hidden;
+		white-space: nowrap;
+	}
+
+	// Inherited colour, so the same markup reads on both stylesheets.
+	&__icon {
+		flex-shrink: 0;
+		padding: 0.5rem 0.65rem;
+		line-height: 1;
+		color: inherit;
+
+		&:hover,
+		&:focus {
+			color: inherit;
+			text-decoration: none;
+		}
+
+		&:disabled,
+		&.disabled {
+			opacity: 0.35;
+		}
+	}
+
+	&__scroll {
+		flex-grow: 1;
+		min-height: 0;
+		overflow-y: auto;
+		padding: 1rem;
+
+		// The page itself does not scroll, so a flick that runs past the end
+		// of the post should stop rather than drag the map with it.
+		overscroll-behavior: contain;
+		-webkit-overflow-scrolling: touch;
 	}
 }
 
@@ -103,6 +402,13 @@ $geo-accent: #10c5f8;
 		box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
 		background: #cfcfcf;
 		transition: transform 0.12s ease-out;
+
+		// The pin whose post is open in the pane. Ringed rather than scaled:
+		// a permanently enlarged pin reads as hovered.
+		&--active {
+			border-color: $geo-accent;
+			box-shadow: 0 0 0 3px rgba($geo-accent, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4);
+		}
 	}
 
 	&:hover &__inner {
@@ -186,6 +492,11 @@ $geo-accent: #10c5f8;
 
 		&--cw img {
 			filter: blur(10px);
+		}
+
+		&--active {
+			outline: 2px solid $geo-accent;
+			outline-offset: -2px;
 		}
 	}
 
