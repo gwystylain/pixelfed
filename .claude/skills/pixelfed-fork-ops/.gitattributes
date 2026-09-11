@@ -1,0 +1,4 @@
+# The scripts run under Git Bash on Windows, where core.autocrlf=true would
+# check them out with CRLF and bash would fail on every '\r'. Keep the whole
+# skill LF on every platform.
+* text eol=lf
