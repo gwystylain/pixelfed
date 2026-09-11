@@ -1,0 +1,63 @@
+{
+  "skill_name": "pixelfed-fork-ops",
+  "evals": [
+    {
+      "id": 1,
+      "name": "upstream-status-and-merge-plan",
+      "prompt": "I think pixelfed cut a new release this week. Check where my fork stands against upstream and lay out exactly what you'd do to bring dev up to date and get it deployable on my truenas box. Read-only checks only for now — don't merge, commit, push, build anything, or change anything on the NAS. Write your findings and the step-by-step plan to outputs/response.md.",
+      "expected_output": "Runs the read-only preflight (fetch tags, compare fork base to newest upstream tag) and reports honestly that the fork is already on the newest release (v0.12.10) with no merge due, rather than inventing one. Then a correct plan for when one lands: merge the tag (not rebase, not upstream/dev), resolve pf-geo insertion points, take upstream's compiled assets, run the dependency checklist for silent breakage, tests + pint + route:list, rebuild and commit assets, tag vX.Y.Z-fork.1, build image from the tag on the host, snapshot, confirm before app.stop, migrate, verify. Mentions no upstream PR.",
+      "files": [],
+      "expectations": [
+        "Reports that the fork is already on the newest upstream release (v0.12.10) and that no merge is currently due",
+        "Does not claim or assume that a newer upstream release exists",
+        "Plan merges the upstream release TAG (not upstream/dev) and explicitly does not rebase",
+        "Plan includes checking for silent breakage beyond textual conflicts (dependency files: namespaces, provider registration, middleware aliases)",
+        "Plan includes rebuilding and committing the compiled frontend assets after the merge",
+        "Plan cuts a fork tag in the vX.Y.Z-fork.N scheme and builds the host image from that tag, not from dev",
+        "Plan snapshots both ZFS datasets before migrating and has an explicit confirmation point before stopping the app",
+        "Plan includes tests (pest), Pint, and route:list as verification before tagging",
+        "Does not propose a pull request to upstream or a push to the upstream remote",
+        "Response describes only read-only checks as having been performed (no merge, commit, push, build, or host change)"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "ship-feature-commands",
+      "prompt": "I just finished a new 'albums' feature on my pixelfed fork — it touched files under resources/assets and app/, all committed on dev. Give me the exact commands, in order, to get it running on my TrueNAS instance, including everything on this PC and on the NAS. Don't actually run anything that changes the repo or the NAS; put the full sequence with a one-line reason per step in outputs/response.md.",
+      "expected_output": "Rebuild the frontend (docker node container, npm install --legacy-peer-deps, npm run production) and commit as 'Update compiled assets'; pest + pint; annotated tag v0.12.10-fork.2 (same upstream base, counter bumped; not moving fork.1); push dev and tag together; on the host: clone the tag, docker build local/pixelfed:0.12.10-fork.2, keep old image; dry-run the compose retag and validate; stop for confirmation before app.stop; stop, snapshot both datasets, apply, app.start (separate from update), migrate --force immediately, verify (script or equivalent checks), remind to untick passwordless sudo. Uses midclt -j. No PR to upstream, no force-push, no deploy from dev.",
+      "files": [],
+      "expectations": [
+        "Rebuilds the compiled frontend before tagging, and the npm install uses --legacy-peer-deps",
+        "Commits the compiled assets (public/js, public/css, mix-manifest.json, package-lock.json) as a separate commit",
+        "Runs the geo unit tests (pest) and Pint before tagging",
+        "Tags v0.12.10-fork.2 as an annotated tag (same upstream base, counter incremented; does not move or reuse fork.1)",
+        "Pushes dev and the tag to origin; no PR, no push to upstream, no force-push",
+        "On the host: clones the fork TAG (not dev), builds local/pixelfed:0.12.10-fork.2, and keeps the previous image for rollback",
+        "Has an explicit confirmation checkpoint immediately before stopping the app",
+        "Stops the app, snapshots BOTH datasets (HDDs/Applications/PixelFed and SSD/ApplicationsDataset/PixelFed) after the stop, applies the retagged config, then starts the app as a separate step",
+        "Runs php artisan migrate --force right after start, then a verification step (truenas-verify.sh or equivalent route/HTTP/log checks)",
+        "midclt calls use the -j flag (never -job)",
+        "Reminds the user to disable passwordless sudo afterwards",
+        "Every step carries a one-line reason"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "live-instance-health-check",
+      "prompt": "someone told me the photo map on my pixelfed instance is throwing errors. can you check the live instance on truenas — read-only only, don't restart or change anything — and tell me what's actually going on and what you'd do about it? put what you found in outputs/response.md",
+      "expected_output": "Uses the ssh alias to run read-only checks on the host (container state, image tag, pending migrations, geo routes, HTTP status of /discover/map and the geo assets with the right Host header, app log errors) — ideally via the bundled verify script — and reports the actual result honestly (everything passes as of now) rather than assuming a fault. Explains what a real failure would look like (assets missing from the image, stale caches, middleware alias removed) and the remedy path, including snapshot rollback if it were a bad upgrade. Does not run app.stop/start, cache:clear, or anything mutating.",
+      "files": [],
+      "expectations": [
+        "Actually connected to the host and ran read-only checks (response contains concrete observed values: container states, image tag, route counts, HTTP codes)",
+        "Checked the map page and both geo assets over HTTP with the correct Host header (or equivalent) and reports the status codes",
+        "Reports the observed state honestly: everything healthy, no errors found, rather than assuming the reported fault",
+        "Checked the app container log for errors and reports the result",
+        "Checked pending migrations and which image tag is running",
+        "Did not run any mutating command (no restart, cache:clear, migrate, app.stop/start, backfill)",
+        "Explains what a real map failure would look like (missing compiled assets, stale bootstrap cache, removed middleware alias) and the corresponding fix",
+        "Names snapshot rollback as the remedy if a bad upgrade were the cause",
+        "Suggests the next diagnostic step outside the host (reverse proxy / browser / the reporter's exact error) since host-side checks pass"
+      ]
+    }
+  ]
+}
