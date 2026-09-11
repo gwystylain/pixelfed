@@ -147,14 +147,51 @@ looks slightly less finished".
 
 ## Rebase procedure
 
+The fork tracks upstream **release tags**, not `upstream/dev`. Upstream's
+`dev` is their integration line — `staging` merges into it continuously and
+tags are cut from it — so anything fetched between tags has not been through
+a release. Merging at tags means the conflict work happens once per release,
+at a known point, with a changelog to consult.
+
 ```bash
-git fetch upstream
-git rebase upstream/dev            # or: git merge upstream/dev
+git fetch upstream --tags
+git tag --sort=-v:refname | head -1     # the newest release
+git merge vX.Y.Z
 ```
 
 Conflicts, if any, will be in the eight files above — they are all small
 insertions, so take upstream's version of the surrounding code and re-apply
 the `pf-geo:` block.
+
+**A clean merge is not a working merge.** The feature's own files never
+conflict, because upstream doesn't have them — which means git will happily
+merge a release that breaks them. Both merges so far were "clean" and both
+were broken:
+
+- 0.12.10 moved `App\Media`, `App\Status`, `App\Place` to `App\Models\*`
+  and deleted the `providers` array from `config/app.php`. Nine files in
+  `app/Geo` and the provider registration had to move.
+- 0.12.10 also removed the `validemail` and `twofactor` middleware aliases
+  (`1d96c9405`). `routes/geo.php` named both; every geo route would have
+  thrown.
+
+So after every merge, diff the incoming range against the things the feature
+*depends on*, not just the files it *edits*:
+
+```bash
+# What changed among the feature's dependencies?
+git diff --stat <old-base> vX.Y.Z -- \
+  bootstrap/app.php bootstrap/providers.php \
+  app/Models/Media.php app/Models/Status.php app/Models/Place.php \
+  app/Services/PlaceService.php app/Services/StatusService.php \
+  app/Services/UserFilterService.php
+
+# Every `use App\...` in the feature still resolves?
+grep -rh '^use App' app/Geo routes/geo.php | sort -u
+
+# Every middleware routes/geo.php names is still defined in bootstrap/app.php?
+grep -oE "middleware\(\[[^]]+\]" routes/geo.php
+```
 
 Then verify:
 
