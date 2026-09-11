@@ -155,7 +155,7 @@ at a known point, with a changelog to consult.
 
 ```bash
 git fetch upstream --tags
-git tag --sort=-v:refname | head -1     # the newest release
+git tag --sort=-v:refname | grep -v -- -fork | head -1   # newest upstream release
 git merge vX.Y.Z
 ```
 

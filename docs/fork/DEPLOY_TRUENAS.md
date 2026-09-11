@@ -62,9 +62,15 @@ fork work with no upstream release in between → vX.Y.Z-fork.2, -fork.3, …
 ```
 
 **Tag scheme.** `vX.Y.Z-fork.N`: the upstream version this fork tag is built on,
-plus a counter. It says at a glance what upstream code is running, and
-`git tag --sort=-v:refname` still puts the newest *upstream* tag first, because
-version sort treats the `-fork` suffix as a pre-release of `vX.Y.Z`.
+plus a counter. It says at a glance what upstream code is running. One
+consequence: git's version sort puts `v0.12.10-fork.1` *above* `v0.12.10`
+(it does not know semver pre-release rules), so anything that looks for the
+newest upstream tag has to filter fork tags out:
+
+```bash
+git tag --sort=-v:refname | grep -v -- -fork | head -1     # newest upstream release
+git tag --sort=-v:refname | grep -- -fork | head -1        # newest fork release
+```
 
 **Merge, don't rebase.** The fork "rebases onto stable releases" in the loose
 sense — it moves to the new base — but mechanically it merges. A real `git
