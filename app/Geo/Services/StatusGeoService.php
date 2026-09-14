@@ -29,6 +29,14 @@ class StatusGeoService
 
     const PRECISION_EXACT = 'exact';
 
+    /** Where a pin came from, written to `statuses.geo_source`. */
+    const SOURCE_EXIF = 'exif';
+
+    const SOURCE_PLACE = 'place';
+
+    /** The author dragged it there, or typed an address. Outranks the rest. */
+    const SOURCE_MANUAL = 'manual';
+
     /**
      * Post types that can appear on the map. Text posts and replies have no
      * business being there.
@@ -71,6 +79,15 @@ class StatusGeoService
         }
 
         if ($status->geo_lat !== null && ! $force) {
+            return false;
+        }
+
+        // A pin the author placed by hand is the one thing on the map that
+        // was not guessed, so nothing derived may overwrite it — not the
+        // forced pass that a place_id edit triggers, and not a re-read of
+        // the EXIF it was placed to correct. Clearing it is deliberate and
+        // goes through clear(), which drops the source with the coordinates.
+        if ($status->geo_source === self::SOURCE_MANUAL) {
             return false;
         }
 

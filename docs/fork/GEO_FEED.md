@@ -17,6 +17,7 @@ handful of upstream files it does touch are listed exhaustively below.
 - [Design decisions](#design-decisions)
 - [The post pane](#the-post-pane)
 - [The date filter](#the-date-filter)
+- [Editing a pin](#editing-a-pin)
 - [Fork patch inventory](#fork-patch-inventory) ← **read this before rebasing**
 - [Rebase procedure](#rebase-procedure)
 - [Architecture](#architecture)
@@ -45,6 +46,8 @@ handful of upstream files it does touch are listed exhaustively below.
 5. **Filters by date.** A two-handled slider in the bar, spanning the oldest
    post on the map to today, with presets for the last 30 days, 6 months and
    year.
+6. **Lets an author move their own pin.** Cameras get a fix wrong. The author
+   of a post can drag its pin, search for an address, or paste coordinates.
 
 ## Design decisions
 
@@ -87,7 +90,7 @@ Note what the setting cannot do: it selects the most precise source available,
 it does not invent one. A post whose photos carry no GPS is still pinned at its
 city, because that is all there is to pin it at.
 
-### No third-party geocoder
+### No third-party geocoder — for photo coordinates
 
 Upstream already ships a dataset of ~128k cities with coordinates
 (`storage/app/cities.json`, loaded by `php artisan import:cities` into
@@ -98,6 +101,11 @@ instance, adds no API key or rate limit to operate, and — the reason it is
 genuinely the right choice rather than merely the cheap one — produces a real
 `place_id`, so suggestions feed straight into upstream's existing location
 pages, `place` API field and location search.
+
+That still holds for everything automatic. [Editing a pin](#editing-a-pin)
+later added a *forward* geocoder, which does call out — but only with text an
+author typed into a box, never with a coordinate read off a photo. The two
+directions are different questions and they get different answers.
 
 ### Model observers instead of controller edits
 
@@ -353,6 +361,70 @@ end today, so their keys turn over daily.
 
 ---
 
+## Editing a pin
+
+A camera's fix can be wrong — indoors, in a city, or when the phone falls back
+to the last position it had. The author of a post can move its pin: drag it on
+the map, search for an address, or paste a coordinate pair. Nobody else can,
+and the server checks rather than trusting the button's absence.
+
+### A hand placed pin outranks everything derived
+
+It writes `geo_source = manual`, and `StatusGeoService::resolve()` returns
+early on any post carrying that. Without it the correction would not survive:
+`StatusGeoObserver` forces a re-derive whenever `place_id` changes, and the
+composer's precision switch forces another, so editing the post afterwards
+would quietly put the pin back on the coordinates the author had just
+disagreed with.
+
+`clear()` drops the source along with the coordinates, so the one way out is
+deliberate: `DELETE` the location, which resets to whatever the photo says.
+That runs inline rather than queued, so the response carries the position the
+map is about to show rather than a promise.
+
+The write is `saveQuietly()`. Moving a pin is not editing a post, and it
+should not bump `updated_at` and federate as a new version of one.
+
+### Addresses come from Nominatim, coordinates from nobody
+
+`geo.geocoder.driver` is `nominatim`: the local `places` table only knows
+towns and cities, and someone correcting a bad fix usually needs somewhere
+smaller. Each search is an outbound request carrying the typed string.
+`GEO_GEOCODER=places` keeps everything local at the cost of that precision.
+
+Using the shared `nominatim.openstreetmap.org` means honouring its usage
+policy, so `AddressGeocoder`:
+
+- sends a `User-Agent` identifying the instance, falling back to one built
+  from `app.url` — an unidentified client is what gets a shared service to
+  block you;
+- allows one request a second, and waits rather than dropping a search
+  somebody is waiting on;
+- caches every result for a day, hits and misses alike, which is most of the
+  rate limiting in practice;
+- fails soft. A geocoder that is down or slow costs the search box, not the
+  editor: dragging the pin never touches it.
+
+A pasted coordinate pair short circuits all of it. `Coordinates::parsePair()`
+takes what a map's "copy coordinates" produces — comma or space separated
+decimal degrees — and rejects everything else, including Null Island and half
+a pair, so an unparsed string falls through to being searched as text. It is
+pure and unit tested; degrees and minutes are not accepted, because no map
+copies them out.
+
+### The marker belongs to the map
+
+`GeoFeed` owns the draggable marker and the coordinates; `GeoLocationEditor`
+owns the panel and the API calls and takes the position back as props. One
+source of truth, so dragging and searching cannot disagree about where the pin
+is.
+
+The marker is added straight to the map rather than to the `markers` layer
+group, so a viewport refetch — which clears and rebuilds every pin — leaves
+the one being placed alone.
+
+---
+
 ## Fork patch inventory
 
 ### Files upstream does not have — safe on rebase
@@ -364,6 +436,7 @@ routes/geo.php                                   routes
 database/migrations/2026_09_09_1000*.php         three additive migrations
 resources/assets/components/geo/GeoFeed.vue      the map and the split view
 resources/assets/components/geo/GeoPostPane.vue  a post beside the map
+resources/assets/components/geo/GeoLocationEditor.vue  moving a pin
 resources/assets/components/geo/GeoSuggest.vue   composer suggestion card
 resources/assets/js/geo.js                       bundle entry point
 resources/assets/js/geo/spa-bridge.js            store + $router for the pane
@@ -507,6 +580,8 @@ consequence if the assumption breaks:
 | `TimelineStatus` and `ContextMenu` emit no events beyond the ones `GeoPostPane` binds | `GeoPostPane.vue` | A new emit is a button in the pane that silently does nothing. |
 | The only components the pane's tree resolves globally are the five in `post-presenters.js` | `post-presenters.js` | A new global tag renders as nothing — no error, just missing UI. The scan in the rebase procedure finds these. |
 | `/api/pixelfed/v1/statuses/{id}` and `/api/v2/statuses/{id}/state` answer a session | `GeoPostPane.vue` | Pane shows "Cannot show this post" for everything. |
+| `StatusGeoObserver` is the only thing that forces a re-derive | `SOURCE_MANUAL` guard in `resolve()` | A new forced path that skips the guard would silently undo hand placed pins. |
+| Vue 2 exposes the component on `$el.__vue__` | nothing at runtime — only the headless harness used to test this | Layout regressions stop being catchable without a browser. |
 
 If a new upload path appears upstream that does **not** go through the `Media`
 model, it will need its own hook.
@@ -603,6 +678,10 @@ All keys live in `config/geo.php`; the env vars are documented in
 | `geo.autotag.max_distance_km` | `50` | Never guess a city further away than this. |
 | `geo.precision.default` | `exact` | `exact` or `city`. See [Exact precision by default](#exact-precision-by-default). |
 | `geo.precision.allow_exact` | `true` | Whether authors may opt a post up to exact. |
+| `geo.geocoder.driver` | `nominatim` | `nominatim` for street addresses, `places` to keep lookups local. |
+| `geo.geocoder.nominatim_url` | OSM | Point at your own instance if you use this much. |
+| `geo.geocoder.user_agent` | from `app.url` | Nominatim blocks clients it cannot identify. |
+| `geo.geocoder.cache_ttl` | `86400` | Seconds a lookup is remembered. Also most of the rate limiting. |
 | `geo.feed.cluster_max_zoom` | `12` | Below this zoom, results are grid clusters. |
 | `geo.feed.max_results` | `250` | Pins per viewport. |
 | `geo.feed.cache_ttl` | `120` | Seconds to cache a viewport. |
@@ -735,6 +814,30 @@ above it:
 A bbox where `minLng > maxLng` is valid and means the viewport crosses the
 antimeridian; the query splits the box.
 
+### `GET /geocode?q=&limit=`
+
+Text to coordinates. A coordinate pair comes back as itself without a lookup;
+anything else goes to the configured geocoder.
+
+```json
+{
+  "driver": "nominatim",
+  "results": [{ "label": "10 Downing Street, London...", "lat": 51.5034, "lng": -0.1276, "source": "nominatim" }]
+}
+```
+
+### `PUT /status/{id}/location` — `{"lat": 51.5, "lng": -0.12}`
+
+Moves one post's pin. **Author only** — 404 for anyone else's post, because
+the lookup is scoped to the caller's profile. Writes `geo_source = manual`,
+which makes the pin immune to re-derivation, and `geo_precision = exact`.
+Returns the new position.
+
+### `DELETE /status/{id}/location`
+
+Drops a hand placed pin and re-derives from the photo, inline. Returns the
+position it landed on, which may be null if there is nothing to derive from.
+
 ### `GET /places/nearby?lat=&lng=&limit=`
 
 Nearest cities, nearest first, each with `distance_km`.
@@ -794,6 +897,18 @@ Not covered by automated tests, and worth checking by hand after a rebase:
   near handle moves. Tab to a handle and use the arrow keys.
 - A range with nothing in it says so, rather than reading as an empty map.
 - With the filter at All, the request carries no `from` or `to` at all.
+- Open one of your own posts: the pin button appears in the pane bar. It does
+  not appear on somebody else's, and `PUT`ting to their status id 404s.
+- Drag the pin: the coordinates in the panel follow it and Apply lights up.
+  Apply, reload, and the pin is where you left it.
+- Search an address, pick a result, Apply. Then paste "51.5074, -0.1278" and
+  check it is offered directly without a lookup.
+- Edit the post's location in the composer afterwards: the hand placed pin
+  must survive it. That is the whole point of `geo_source = manual`.
+- Reset to photo: the pin goes back to the EXIF position, and the button
+  stops being offered.
+- Turn the geocoder off (`GEO_GEOCODER=places`) and check the box still finds
+  towns, and that dragging and pasting are unaffected.
 
 `ReverseGeocoder` and `GeoFeedService` are database-bound and untested; the
 repository has no fixtures for a seeded `places` table.
@@ -829,6 +944,16 @@ repository has no fixtures for a seeded `places` table.
   entry only that viewer will ever read, for `geo.feed.cache_ttl` seconds.
 - **The date filter resets on reload.** See [The date filter](#the-date-filter)
   for why that is a choice rather than an omission.
+- **Editing a pin does not move the post's place.** The map position and the
+  `place` shown on the post are separate: correcting one leaves the other
+  saying whatever it said. Worth wiring together, but changing `place_id`
+  federates as an edit, which moving a pin deliberately does not.
+- **Nominatim is a shared service.** The usage policy is honoured — one
+  request a second, identified, cached for a day — but a busy instance should
+  run its own, and a lookup can fail or time out. Dragging and pasting never
+  touch it.
+- **Only the author can move a pin.** No moderator override. An admin fixing
+  somebody else's bad fix is a different feature with different consequences.
 - **Month arithmetic overflows rather than clamps.** "6 months" back from
   31 August is 3 March, because that is what `Date.setMonth` does. Invisible
   at the scale the slider works at.

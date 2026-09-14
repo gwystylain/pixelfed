@@ -83,6 +83,38 @@ return [
         'allow_exact' => env('GEO_PRECISION_ALLOW_EXACT', true),
     ],
 
+    /*
+    | Turning typed text into coordinates, for "edit location" on the map.
+    |
+    |   nominatim — OpenStreetMap's geocoder. Resolves street addresses, so a
+    |               bad GPS read can be corrected to somewhere smaller than a
+    |               city. Each search is an outbound request from this server
+    |               carrying only what the author typed.
+    |   places    — the local `places` table. Towns and cities only, and
+    |               nothing leaves the instance.
+    |
+    | Dragging the pin and pasting a coordinate pair work under both, and
+    | neither calls out: they are the accurate paths regardless.
+    |
+    | Using the shared nominatim.openstreetmap.org means accepting its usage
+    | policy: identify yourself in `user_agent`, and no more than one request
+    | a second. Both are handled, results are cached for a day, but a busy
+    | instance should point `nominatim_url` at its own.
+    */
+    'geocoder' => [
+        'driver' => env('GEO_GEOCODER', 'nominatim'),
+
+        'nominatim_url' => env('GEO_GEOCODER_URL', 'https://nominatim.openstreetmap.org'),
+
+        // Sent as User-Agent. Nominatim blocks clients it cannot identify;
+        // the fallback is built from app.url, which is usually enough.
+        'user_agent' => env('GEO_GEOCODER_USER_AGENT'),
+
+        'timeout' => env('GEO_GEOCODER_TIMEOUT', 6),
+
+        'cache_ttl' => env('GEO_GEOCODER_CACHE_TTL', 86400),
+    ],
+
     'feed' => [
         // Max individual posts returned for one viewport.
         'max_results' => env('GEO_FEED_MAX_RESULTS', 250),

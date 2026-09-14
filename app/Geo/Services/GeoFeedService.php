@@ -201,7 +201,7 @@ class GeoFeedService
         $filtered = $viewerProfileId ? UserFilterService::filters($viewerProfileId) : [];
 
         $query = $this->baseQuery($minLat, $minLng, $maxLat, $maxLng, $window)
-            ->select('id', 'profile_id', 'geo_lat', 'geo_lng', 'geo_precision');
+            ->select('id', 'profile_id', 'geo_lat', 'geo_lng', 'geo_precision', 'geo_source');
 
         // Small block lists filter in SQL. A viewer with hundreds of blocks
         // would turn that into an unreasonable IN list, so past a threshold
@@ -244,6 +244,9 @@ class GeoFeedService
             'lat' => (float) $row->geo_lat,
             'lng' => (float) $row->geo_lng,
             'precision' => $row->geo_precision,
+
+            // The editor offers "reset to photo" only for a hand placed pin.
+            'source' => $row->geo_source,
             'url' => $status['url'] ?? null,
             'created_at' => $status['created_at'] ?? null,
             'sensitive' => (bool) ($status['sensitive'] ?? false),

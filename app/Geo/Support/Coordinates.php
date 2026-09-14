@@ -95,4 +95,33 @@ class Coordinates
     {
         return round($value, $decimals);
     }
+
+    /**
+     * A coordinate pair somebody pasted: "51.5074, -0.1278".
+     *
+     * Somebody fixing a bad GPS read often has the real position to hand
+     * already — a right click in another map gives them exactly this string —
+     * and pasting it is both faster and more accurate than dragging.
+     *
+     * A comma or whitespace separates the two. Anything else is not a
+     * coordinate pair: a place name, half a pair, an out of range value or
+     * Null Island all return null, so the caller can fall through to
+     * searching for the text instead. Degrees and minutes are not accepted;
+     * decimal degrees is what every map copies out.
+     *
+     * @return array{0: float, 1: float}|null
+     */
+    public static function parsePair(string $value): ?array
+    {
+        $pattern = '/^(-?\d{1,3}(?:\.\d+)?)\s*(?:,\s*|\s+)(-?\d{1,3}(?:\.\d+)?)$/';
+
+        if (! preg_match($pattern, trim($value), $parts)) {
+            return null;
+        }
+
+        $lat = (float) $parts[1];
+        $lng = (float) $parts[2];
+
+        return self::isValid($lat, $lng) ? [$lat, $lng] : null;
+    }
 }

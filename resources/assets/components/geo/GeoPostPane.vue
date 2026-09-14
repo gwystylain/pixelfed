@@ -37,6 +37,18 @@
 			</div>
 
 			<button
+				v-if="isOwnPost"
+				type="button"
+				class="btn btn-link geo-pane__icon"
+				:class="{ 'geo-pane__icon--on': editingLocation }"
+				title="Edit this post's location on the map"
+				aria-label="Edit this post's location on the map"
+				:aria-pressed="editingLocation ? 'true' : 'false'"
+				@click="$emit('edit-location')">
+				<i class="far fa-map-marker-alt"></i>
+			</button>
+
+			<button
 				type="button"
 				class="btn btn-link geo-pane__icon d-md-none"
 				:title="expanded ? 'Show the map' : 'Hide the map'"
@@ -199,6 +211,13 @@
 				type: Boolean,
 				default: false,
 			},
+
+			// The map owns the pin being dragged; the pane only needs to know
+			// so the button can show as active.
+			editingLocation: {
+				type: Boolean,
+				default: false,
+			},
 		},
 
 		data() {
@@ -217,6 +236,11 @@
 		},
 
 		computed: {
+			// Only the author may move a pin, and the server enforces it too.
+			isOwnPost() {
+				return this.post && this.user && this.post.account.id == this.user.id;
+			},
+
 			// A reblog carries the post it shares; every reaction belongs to
 			// the latter. The map only pins local posts, so this should never
 			// fire — but the components downstream assume it has been done.

@@ -73,6 +73,17 @@ $geo-handle-half: 7px;
 		min-width: 0;
 	}
 
+	// The map and anything floating over it. The editor panel has to be
+	// positioned against the map rather than against the body, or "top
+	// right" puts it on top of the post pane.
+	&__mapwrap {
+		position: relative;
+		display: flex;
+		flex: 1 1 auto;
+		min-height: 0;
+		min-width: 0;
+	}
+
 	&__map {
 		flex: 1 1 auto;
 		min-height: 0;
@@ -121,7 +132,7 @@ $geo-handle-half: 7px;
 
 	&--pane-open {
 		@media (max-width: 767.98px) {
-			.geo-feed__map {
+			.geo-feed__mapwrap {
 				flex: 0 0 38%;
 			}
 		}
@@ -142,6 +153,157 @@ $geo-handle-half: 7px;
 				border-top: 0;
 			}
 		}
+	}
+}
+
+// Moving a post's pin. The panel floats over the map, because that is where
+// the work is happening; the pane beside it keeps showing the post.
+.geo-feed__editor {
+	position: absolute;
+	top: 0.75rem;
+	width: 19rem;
+	max-width: calc(100% - 1.5rem);
+
+	// Top *right*: Leaflet puts its zoom control top left, and that control
+	// is z-index 1000, so a panel in that corner ends up underneath it.
+	right: 0.75rem;
+
+	// Above `.leaflet-top`/`.leaflet-bottom` at 1000, below Bootstrap's
+	// modals at 1050 so the post's own dialogs still open over it.
+	z-index: 1001;
+
+	// On a phone the map is a strip at the top of the screen. Anchoring the
+	// panel to the bottom of it leaves the pin, and the map under it, in
+	// view while the panel is open.
+	@media (max-width: 767.98px) {
+		top: auto;
+		right: 0.5rem;
+		bottom: 0.5rem;
+		left: 0.5rem;
+		width: auto;
+		max-width: none;
+	}
+}
+
+.geo-editor {
+	padding: 0.75rem;
+	border-radius: 10px;
+	border: $geo-hairline;
+	background: var(--card-bg, #fff);
+	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+	font-size: 13px;
+
+	&__head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 0.25rem;
+	}
+
+	&__close {
+		padding: 0 0.25rem;
+		line-height: 1;
+		color: inherit;
+
+		&:hover,
+		&:focus {
+			color: inherit;
+			text-decoration: none;
+		}
+	}
+
+	&__hint {
+		margin: 0 0 0.5rem;
+		font-size: 11px;
+		opacity: 0.75;
+	}
+
+	&__search {
+		display: flex;
+		gap: 0.35rem;
+	}
+
+	&__note {
+		margin: 0.4rem 0 0;
+		font-size: 11px;
+	}
+
+	&__results {
+		list-style: none;
+		margin: 0.4rem 0 0;
+		padding: 0;
+
+		// Nominatim returns long display names; a runaway list would cover
+		// the map it is meant to help you read.
+		max-height: 9rem;
+		overflow-y: auto;
+	}
+
+	&__result {
+		display: block;
+		width: 100%;
+		padding: 0.3rem 0.4rem;
+		border: 0;
+		border-radius: 6px;
+		background: transparent;
+		color: inherit;
+		font-size: 12px;
+		text-align: left;
+
+		&:hover,
+		&:focus {
+			background: rgba(127, 127, 127, 0.14);
+		}
+	}
+
+	&__coords {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		margin: 0.6rem 0 0;
+		font-size: 11px;
+		font-variant-numeric: tabular-nums;
+	}
+
+	&__moved {
+		padding: 0 0.3rem;
+		border-radius: 4px;
+		background: rgba($geo-accent, 0.18);
+		color: inherit;
+		font-size: 10px;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+	}
+
+	&__actions {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		margin-top: 0.6rem;
+	}
+
+	&__spacer {
+		flex-grow: 1;
+	}
+}
+
+// The pin being placed. Deliberately unlike a photo pin: it is a control,
+// not a post.
+.geo-editpin {
+	background: transparent;
+	border: 0;
+	cursor: grab;
+
+	&__inner {
+		display: flex;
+		align-items: flex-end;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+		color: $geo-accent;
+		font-size: 30px;
+		line-height: 1;
+		text-shadow: 0 0 3px #fff, 0 2px 5px rgba(0, 0, 0, 0.5);
 	}
 }
 
@@ -364,6 +526,11 @@ $geo-handle-half: 7px;
 		&:disabled,
 		&.disabled {
 			opacity: 0.35;
+		}
+
+		// The location editor is open, and this button is what closes it.
+		&--on {
+			color: $geo-accent;
 		}
 	}
 

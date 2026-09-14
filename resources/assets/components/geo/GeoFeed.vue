@@ -95,7 +95,23 @@
 		</div>
 
 		<div class="geo-feed__body">
-			<div ref="map" class="geo-feed__map"></div>
+			<div class="geo-feed__mapwrap">
+				<div ref="map" class="geo-feed__map"></div>
+
+				<geo-location-editor
+					v-if="editing"
+					class="geo-feed__editor"
+					:post-id="editing.postId"
+					:lat="editing.lat"
+					:lng="editing.lng"
+					:origin-lat="editing.originLat"
+					:origin-lng="editing.originLng"
+					:can-reset="editing.canReset"
+					@move="moveEditPin"
+					@saved="onLocationSaved"
+					@cancel="stopEditLocation"
+					/>
+			</div>
 
 			<aside v-if="hasSelection" class="geo-feed__pane" aria-label="Selected post">
 				<geo-post-pane
@@ -104,6 +120,8 @@
 					:position="selectedIndex"
 					:count="gallery.length"
 					:expanded="paneExpanded"
+					:editing-location="editing !== null"
+					@edit-location="toggleEditLocation"
 					@close="closePost()"
 					@prev="step(-1)"
 					@next="step(1)"
@@ -193,6 +211,8 @@
 	export default {
 		components: {
 			'geo-post-pane': () => import(/* webpackChunkName: "geo-post" */ './GeoPostPane.vue'),
+			'geo-location-editor': () =>
+				import(/* webpackChunkName: "geo-post" */ './GeoLocationEditor.vue'),
 		},
 
 		data() {
@@ -228,6 +248,10 @@
 				// Small screens cannot split usefully, so the pane can take
 				// the whole page and hand the map back on request.
 				paneExpanded: false,
+
+				// Set while the author is moving one post's pin: the marker
+				// lives on the map, the panel edits the same numbers.
+				editing: null,
 
 				// Date filter, held as day offsets from `dateOrigin` so the
 				// two slider handles are plain integers.
@@ -744,6 +768,7 @@
 			closePost(options) {
 				const opts = options || {};
 
+				this.stopEditLocation();
 				this.gallery = [];
 				this.selectedIndex = 0;
 				this.paneExpanded = false;
@@ -766,6 +791,7 @@
 					return;
 				}
 
+				this.stopEditLocation();
 				this.selectedIndex = next;
 				this.writeHistory(this.selectedId, true);
 			},
@@ -945,6 +971,128 @@
 					// No history API. The pane still works, it just is not
 					// linkable and Back leaves the page.
 				}
+			},
+
+			/**
+			 * Move one post's pin, because the camera can be wrong.
+			 *
+			 * The marker belongs to the map rather than to the panel, and is
+			 * added straight to the map rather than to `markers`, so a
+			 * viewport refetch clearing the pins leaves it alone.
+			 */
+			toggleEditLocation() {
+				if (this.editing) {
+					this.stopEditLocation();
+
+					return;
+				}
+
+				const post = this.gallery[this.selectedIndex];
+
+				if (!post) {
+					return;
+				}
+
+				// A post opened from a link has no coordinates until a
+				// viewport arrives carrying it. Start from the middle of the
+				// map rather than leaving the button dead.
+				// On a phone the pane may be covering the map. You cannot drag
+				// a pin you cannot see.
+				this.paneExpanded = false;
+
+				const known = isFinite(post.lat) && isFinite(post.lng);
+				const centre = this.map ? this.map.getCenter() : { lat: 0, lng: 0 };
+				const lat = known ? post.lat : centre.lat;
+				const lng = known ? post.lng : centre.lng;
+
+				this.editing = {
+					postId: post.id,
+					lat: lat,
+					lng: lng,
+					originLat: lat,
+					originLng: lng,
+					canReset: post.source === 'manual',
+				};
+
+				this.$nextTick(this.addEditMarker);
+			},
+
+			addEditMarker() {
+				if (!this.map || !this.editing || this.editMarker) {
+					return;
+				}
+
+				this.editMarker = L.marker([this.editing.lat, this.editing.lng], {
+					draggable: true,
+					autoPan: true,
+					keyboard: true,
+					title: 'Drag to where this post belongs',
+
+					// Above the ordinary pins, which it is standing in for.
+					zIndexOffset: 1000,
+					icon: L.divIcon({
+						html: this.el('div', { className: 'geo-editpin__inner' }, [
+							this.el('i', { className: 'fas fa-map-marker-alt' }),
+						]),
+						className: 'geo-editpin',
+						iconSize: [36, 36],
+						iconAnchor: [18, 36],
+					}),
+				}).addTo(this.map);
+
+				this.editMarker.on('drag dragend', () => {
+					const at = this.editMarker.getLatLng();
+
+					this.editing.lat = at.lat;
+					this.editing.lng = at.lng;
+				});
+
+				this.map.panTo([this.editing.lat, this.editing.lng]);
+			},
+
+			moveEditPin(lat, lng) {
+				if (!this.editing) {
+					return;
+				}
+
+				this.editing.lat = lat;
+				this.editing.lng = lng;
+
+				if (this.editMarker) {
+					this.editMarker.setLatLng([lat, lng]);
+				}
+
+				if (this.map) {
+					// Close enough to see what was picked, without throwing
+					// away a deliberate zoom.
+					this.map.setView([lat, lng], Math.max(this.map.getZoom(), 14));
+				}
+			},
+
+			stopEditLocation() {
+				this.editing = null;
+
+				if (this.editMarker) {
+					this.editMarker.remove();
+					this.editMarker = undefined;
+				}
+			},
+
+			/**
+			 * Applied or reset. The server has already flushed the viewport
+			 * cache, so a refetch shows the pin where it now is.
+			 */
+			onLocationSaved(position) {
+				const post = this.gallery[this.selectedIndex];
+
+				if (post && position && position.lat != null) {
+					post.lat = position.lat;
+					post.lng = position.lng;
+					post.source = position.source;
+				}
+
+				this.stopEditLocation();
+				this.fetch();
 			},
 
 			dayToDate(day) {

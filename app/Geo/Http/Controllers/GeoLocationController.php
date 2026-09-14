@@ -3,11 +3,15 @@
 namespace App\Geo\Http\Controllers;
 
 use App\Geo\Jobs\ResolveStatusGeoJob;
+use App\Geo\Services\AddressGeocoder;
+use App\Geo\Services\GeoFeedService;
 use App\Geo\Services\ReverseGeocoder;
 use App\Geo\Services\StatusGeoService;
 use App\Geo\Support\Coordinates;
 use App\Http\Controllers\Controller;
 use App\Models\Media;
+use App\Models\Status;
+use App\Services\StatusService;
 use Illuminate\Http\Request;
 
 /**
@@ -177,6 +181,116 @@ class GeoLocationController extends Controller
             'media_id' => (string) $media->id,
             'precision' => $media->geo_precision,
         ]);
+    }
+
+    /**
+     * Text to coordinates, for the map's "edit location" box.
+     *
+     * A pasted coordinate pair comes back as itself; everything else goes to
+     * whichever geocoder is configured. See docs/fork/GEO_FEED.md.
+     */
+    public function geocode(Request $request, AddressGeocoder $geocoder)
+    {
+        abort_unless(config('geo.enabled'), 404);
+        abort_if(! $request->user(), 403);
+
+        $this->validate($request, [
+            'q' => 'required|string|min:2|max:180',
+            'limit' => 'nullable|integer|min:1|max:10',
+        ]);
+
+        return response()->json([
+            'driver' => $geocoder->driver(),
+            'results' => $geocoder->search(
+                (string) $request->input('q'),
+                (int) ($request->input('limit') ?? 5)
+            ),
+        ]);
+    }
+
+    /**
+     * Put a post's pin where its author says it belongs.
+     *
+     * The whole point is that the camera can be wrong, so this outranks
+     * everything derived: it writes `geo_source = manual`, and resolve()
+     * refuses to touch a post carrying that.
+     */
+    public function updateStatusLocation(Request $request, $id)
+    {
+        abort_unless(config('geo.enabled'), 404);
+        abort_if(! $request->user(), 403);
+
+        $this->validate($request, [
+            'lat' => 'required|numeric|between:-90,90',
+            'lng' => 'required|numeric|between:-180,180',
+        ]);
+
+        $lat = (float) $request->input('lat');
+        $lng = (float) $request->input('lng');
+
+        // between: lets 0,0 through, and Coordinates does not consider that
+        // a place — it is what a camera writes when it has no fix.
+        abort_unless(Coordinates::isValid($lat, $lng), 422, 'That is not a usable coordinate');
+
+        // Scoped to the author: this is "fix my own post", and an admin
+        // moving someone else's pin is a different feature with different
+        // consequences.
+        $status = Status::whereProfileId($request->user()->profile_id)
+            ->findOrFail((int) $id);
+
+        abort_unless(
+            in_array($status->type, StatusGeoService::MAPPABLE_TYPES, true),
+            422,
+            'This post cannot appear on the map'
+        );
+
+        $status->geo_lat = $lat;
+        $status->geo_lng = $lng;
+        $status->geo_precision = StatusGeoService::PRECISION_EXACT;
+        $status->geo_source = StatusGeoService::SOURCE_MANUAL;
+
+        // Quietly: the post itself has not been edited, so this should not
+        // bump updated_at and federate as a new version of it.
+        $status->saveQuietly();
+
+        StatusService::del($status->id);
+        GeoFeedService::flush();
+
+        return response()->json($this->presentStatusLocation($status));
+    }
+
+    /**
+     * Drop a hand placed pin and go back to what the photo says.
+     *
+     * Run inline rather than queued so the answer in the response is the
+     * position the map is about to show.
+     */
+    public function resetStatusLocation(Request $request, $id, StatusGeoService $statusGeo)
+    {
+        abort_unless(config('geo.enabled'), 404);
+        abort_if(! $request->user(), 403);
+
+        $status = Status::whereProfileId($request->user()->profile_id)
+            ->findOrFail((int) $id);
+
+        $statusGeo->clear($status);
+        $statusGeo->resolve($status->refresh(), true);
+
+        return response()->json($this->presentStatusLocation($status->refresh()));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function presentStatusLocation(Status $status): array
+    {
+        return [
+            'status_id' => (string) $status->id,
+            'lat' => $status->geo_lat !== null ? (float) $status->geo_lat : null,
+            'lng' => $status->geo_lng !== null ? (float) $status->geo_lng : null,
+            'precision' => $status->geo_precision,
+            'source' => $status->geo_source,
+        ];
     }
 
     /**

@@ -27,7 +27,12 @@ Route::domain(config('pixelfed.domain.app'))
         Route::prefix('api/geo/v1')->group(function () {
             Route::get('feed', [GeoFeedController::class, 'viewport']);
             Route::get('places/nearby', [GeoLocationController::class, 'nearby']);
+            Route::get('geocode', [GeoLocationController::class, 'geocode']);
             Route::get('compose/suggest', [GeoLocationController::class, 'suggest']);
             Route::put('compose/media/{id}', [GeoLocationController::class, 'updateMedia']);
+
+            // Correcting a pin the camera got wrong. Author only.
+            Route::put('status/{id}/location', [GeoLocationController::class, 'updateStatusLocation']);
+            Route::delete('status/{id}/location', [GeoLocationController::class, 'resetStatusLocation']);
         });
     });
