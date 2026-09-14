@@ -63,9 +63,26 @@ pending=$(sudo docker exec "$app" php artisan migrate:status 2>/dev/null | grep 
 [ "${pending:-0}" -eq 0 ] && pass "no pending migrations" || failx "$pending pending migration(s) - run: php artisan migrate --force"
 
 echo "== routes"
-n_api=$(sudo docker exec "$app" php artisan route:list --path=api/geo 2>/dev/null | grep -c "api/geo/v1" || true)
+routes=$(sudo docker exec "$app" php artisan route:list --path=api/geo 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+n_api=$(printf '%s\n' "$routes" | grep -c "api/geo/v1" || true)
 n_map=$(sudo docker exec "$app" php artisan route:list --path=discover/map 2>/dev/null | grep -c "discover/map" || true)
-[ "${n_api:-0}" -eq 4 ] && pass "4 geo API routes registered" || failx "geo API routes: $n_api (expected 4)"
+
+# Named rather than counted. A count has to be edited every time a route is
+# added — it failed the 0.12.10-fork.3 deploy for having 7 instead of 4 — and
+# it never noticed *which* route was missing, which is the thing worth
+# knowing. Add to this list when a route becomes load bearing.
+missing=""
+for route in \
+  "api/geo/v1/feed" \
+  "api/geo/v1/places/nearby" \
+  "api/geo/v1/geocode" \
+  "api/geo/v1/compose/suggest" \
+  "api/geo/v1/compose/media" \
+  "api/geo/v1/status/{id}/location"
+do
+  printf '%s\n' "$routes" | grep -qF -- "$route" || missing="$missing $route"
+done
+[ -z "$missing" ] && pass "geo API routes registered ($n_api)" || failx "geo API routes missing:$missing"
 [ "${n_map:-0}" -eq 1 ] && pass "discover/map registered" || failx "discover/map routes: $n_map (expected 1)"
 
 echo "== config as the app sees it"
