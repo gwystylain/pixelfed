@@ -149,8 +149,8 @@ simply unused.
 On the TrueNAS host, from the fork tag — never from `dev`, never from upstream:
 
 ```bash
-git clone --branch v0.12.10-fork.1 --depth 1 https://github.com/gwystylain/pixelfed.git src
-cd src && docker build -t local/pixelfed:0.12.10-fork.1 .
+git clone --branch v0.12.10-fork.1 --depth 1 https://github.com/gwystylain/pixelfed.git ~/src-v0.12.10-fork.1
+cd ~/src-v0.12.10-fork.1 && docker build -t local/pixelfed:0.12.10-fork.1 .
 ```
 
 No `chown` on the clone first: the Dockerfile does `COPY --chown=www-data`

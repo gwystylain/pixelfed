@@ -12,8 +12,8 @@ Phases A-B are safe to run without asking. Stop at the marked point.
 ## A. Build the image (instance keeps serving)
 
 ```bash
-ssh -o BatchMode=yes truenas 'git clone --branch vX.Y.Z-fork.N --depth 1 https://github.com/gwystylain/pixelfed.git ~/src-X.Y.Z-fork.N'
-ssh -o BatchMode=yes truenas 'cd ~/src-X.Y.Z-fork.N && sudo docker build -t local/pixelfed:X.Y.Z-fork.N . 2>&1 | tail -5'
+ssh -o BatchMode=yes truenas 'git clone --branch vX.Y.Z-fork.N --depth 1 https://github.com/gwystylain/pixelfed.git ~/src-vX.Y.Z-fork.N'
+ssh -o BatchMode=yes truenas 'cd ~/src-vX.Y.Z-fork.N && sudo docker build -t local/pixelfed:X.Y.Z-fork.N . 2>&1 | tail -5'
 ssh -o BatchMode=yes truenas 'sudo docker images local/pixelfed'
 ```
 
@@ -21,7 +21,13 @@ Several minutes (`composer install` runs inside). Both the new and the
 previous image should be listed afterwards; the previous one is the rollback.
 No `chown` on the clone - the Dockerfile chowns on `COPY`.
 
-Verify the clone is the tag you think: `git -C ~/src-... describe --tags`,
+The clone directory is the **full tag**, `v` and all, so it matches the
+`--branch` argument and cannot collide when the upstream base bumps -
+`~/src-fork1` would be ambiguous the moment there is a v0.12.11-fork.1.
+The first two deploys used that short form; the cleanup step below
+removes them.
+
+Verify the clone is the tag you think: `git -C ~/src-vX.Y.Z-fork.N describe --tags`,
 and that `public/js/geo.js` exists in it (if it doesn't, the assets were
 never committed and the map will 500 - fix on the PC, retag).
 

@@ -79,7 +79,9 @@ working copy has CRLF while every committed blob is LF, so:
 - **Stored compose:** `/mnt/.ix-apps/app_configs/pixelfed/versions/<ver>/user_config.yaml`
   (root-only, contains DB passwords). `scripts/truenas-bump-image.py` edits
   it in place.
-- **Source clones** live in `~/src-<tag>` on the host; the old ones can go
+- **Source clones** live in `~/src-<full tag>` on the host - `~/src-v0.12.10-fork.2`,
+  matching the `--branch` argument. (The first two deploys used `~/src-fork1`
+  and `~/src-fork2`, which collide across upstream bases.) The old ones can go
   after a successful deploy.
 
 **midclt** (the TrueNAS CLI; one of the three supported ways to change

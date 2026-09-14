@@ -57,8 +57,8 @@ def main():
     # The image must already be built on this host.
     if run(["docker", "image", "inspect", image]).returncode != 0:
         die("image %s does not exist on this host. Build it first:\n"
-            "  git clone --branch v%s --depth 1 https://github.com/gwystylain/pixelfed.git ~/src-%s\n"
-            "  cd ~/src-%s && docker build -t %s ." % (image, tag, tag, tag, image))
+            "  git clone --branch v%s --depth 1 https://github.com/gwystylain/pixelfed.git ~/src-v%s\n"
+            "  cd ~/src-v%s && docker build -t %s ." % (image, tag, tag, tag, image))
 
     paths = sorted(glob.glob(CONFIG_GLOB), key=os.path.getmtime)
     if not paths:
