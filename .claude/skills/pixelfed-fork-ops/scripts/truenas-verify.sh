@@ -83,8 +83,35 @@ echo "== http (host port 8095, unauthenticated)"
 domain=$(sudo grep -oE '^APP_DOMAIN=.*' "$envfile" | cut -d= -f2- | tr -d '"'"'"' ')
 code() { curl -s -o /dev/null -w '%{http_code}' -H "Host: $domain" "http://127.0.0.1:8095$1"; }
 c=$(code /discover/map);    [ "$c" = "302" ] && pass "/discover/map -> 302 (login redirect)" || failx "/discover/map -> $c (expected 302)"
-c=$(code /js/geo.js);       [ "$c" = "200" ] && pass "/js/geo.js -> 200" || failx "/js/geo.js -> $c"
-c=$(code /css/geo.css);     [ "$c" = "200" ] && pass "/css/geo.css -> 200" || failx "/css/geo.css -> $c"
+
+# Asset list comes from the manifest, not from names written here. The map
+# page gained spa.css and a hash-named chunk at 0.12.10-fork.2, and a check
+# that spells its files out by hand keeps passing while a new one 404s.
+# Requesting the unversioned key is right: the ?id= is only a cache buster.
+assets=$(sudo docker exec "$app" cat public/mix-manifest.json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    manifest = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+# Everything the feature ships, however many chunks that turns into...
+want = [k for k in manifest if k.startswith("/js/geo") or k.startswith("/css/geo")]
+# ...plus the bundles every page needs and the one the map page borrows.
+for k in ("/css/spa.css", "/js/manifest.js", "/js/vendor.js", "/js/app.js", "/js/components.js"):
+    if k in manifest:
+        want.append(k)
+print("\n".join(sorted(set(want))))
+' 2>/dev/null)
+
+if [ -z "$assets" ]; then
+  failx "could not read public/mix-manifest.json from $app - asset checks skipped"
+else
+  for a in $assets; do
+    c=$(code "$a")
+    [ "$c" = "200" ] && pass "$a -> 200" || failx "$a -> $c"
+  done
+fi
+
 c=$(code /api/geo/v1/feed); [ "$c" = "401" ] && pass "/api/geo/v1/feed -> 401 (auth required)" || failx "/api/geo/v1/feed -> $c (expected 401)"
 
 echo "== durable state on the datasets"
