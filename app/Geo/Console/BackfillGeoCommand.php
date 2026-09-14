@@ -19,6 +19,7 @@ class BackfillGeoCommand extends Command
     protected $signature = 'geo:backfill
         {--places : Pin posts that already have a location at that city}
         {--media : Re-read EXIF from uploads that have not been checked}
+        {--repin : Re-derive pinned posts at the current precision setting}
         {--limit=0 : Stop after this many rows (0 = no limit)}
         {--dry-run : Report what would change without writing}';
 
@@ -34,9 +35,10 @@ class BackfillGeoCommand extends Command
 
         $places = (bool) $this->option('places');
         $media = (bool) $this->option('media');
+        $repin = (bool) $this->option('repin');
 
-        if (! $places && ! $media) {
-            $this->error('Nothing to do. Pass --places, --media, or both.');
+        if (! $places && ! $media && ! $repin) {
+            $this->error('Nothing to do. Pass --places, --media, --repin, or a combination.');
             $this->line('');
             $this->line('  --places  pins historical posts that already carry a place_id.');
             $this->line('            Safe, fast, and the quickest way to get a populated map.');
@@ -44,6 +46,10 @@ class BackfillGeoCommand extends Command
             $this->line('  --media   re-reads GPS from stored uploads. Most older files have');
             $this->line('            already been stripped by the resize pipeline, so expect');
             $this->line('            a low hit rate outside recent uploads.');
+            $this->line('');
+            $this->line('  --repin   moves posts already on the map onto the coordinates');
+            $this->line('            in their own photos, for when geo.precision.default');
+            $this->line('            has changed.');
 
             return self::FAILURE;
         }
@@ -58,6 +64,10 @@ class BackfillGeoCommand extends Command
 
         if ($media) {
             $this->backfillFromMedia($mediaGeo, $statusGeo);
+        }
+
+        if ($repin) {
+            $this->repin($statusGeo);
         }
 
         if (! $this->option('dry-run')) {
@@ -194,6 +204,103 @@ class BackfillGeoCommand extends Command
         $bar->finish();
         $this->line('');
         $this->info("Checked {$checked} upload(s), found coordinates in {$found}.");
+    }
+
+    /**
+     * Re-derive posts that are already on the map.
+     *
+     * For when `geo.precision.default` has changed: a post pinned at its city
+     * under the old setting has a more precise position available and no way
+     * to reach it, because `resolve()` leaves an existing pin alone unless it
+     * is forced.
+     *
+     * Only posts whose photos actually carry GPS are candidates. One pinned
+     * from its `place_id` has nothing more precise to offer, and re-deriving
+     * it would cost a query to arrive back where it started.
+     */
+    protected function repin(StatusGeoService $statusGeo): void
+    {
+        $query = $this->repinnableStatuses();
+        $total = $query->count();
+
+        $this->line('');
+        $this->info("Re-deriving pinned posts at precision '".config('geo.precision.default')."': {$total} candidate(s)");
+
+        if ($total === 0) {
+            return;
+        }
+
+        $limit = (int) $this->option('limit');
+        $bar = $this->output->createProgressBar($limit > 0 ? min($limit, $total) : $total);
+        $bar->start();
+
+        $considered = 0;
+        $moved = 0;
+        $unchanged = 0;
+        $stop = false;
+
+        $this->repinnableStatuses()->chunkById(200, function ($statuses) use (
+            &$considered, &$moved, &$unchanged, &$stop, $bar, $limit, $statusGeo
+        ) {
+            foreach ($statuses as $status) {
+                $considered++;
+
+                if (! $this->option('dry-run')) {
+                    // Cast both sides: the column comes back as a decimal
+                    // string and goes back in as a float, which would read as
+                    // a move on every row.
+                    $before = [(float) $status->geo_lat, (float) $status->geo_lng];
+
+                    // Forced, because resolve() leaves an existing pin alone.
+                    $statusGeo->resolve($status, true);
+
+                    if ([(float) $status->geo_lat, (float) $status->geo_lng] !== $before) {
+                        $moved++;
+                    } else {
+                        $unchanged++;
+                    }
+                }
+
+                $bar->advance();
+
+                if ($limit > 0 && $considered >= $limit) {
+                    $stop = true;
+
+                    return false;
+                }
+            }
+
+            return ! $stop;
+        });
+
+        $bar->finish();
+        $this->line('');
+
+        if ($this->option('dry-run')) {
+            $this->info("Would re-derive {$considered} pinned post(s).");
+
+            return;
+        }
+
+        $this->info("Moved {$moved} pin(s); {$unchanged} were already as precise as they can be.");
+    }
+
+    /**
+     * Pinned posts whose photos carry coordinates of their own.
+     */
+    protected function repinnableStatuses()
+    {
+        return Status::query()
+            ->whereNotNull('geo_lat')
+            ->whereIn('type', StatusGeoService::MAPPABLE_TYPES)
+            ->whereNull('in_reply_to_id')
+            ->whereNull('reblog_of_id')
+            ->whereIn('id', function ($q) {
+                $q->select('status_id')
+                    ->from('media')
+                    ->whereNotNull('status_id')
+                    ->whereNotNull('geo_lat');
+            });
     }
 
     protected function pendingStatuses()

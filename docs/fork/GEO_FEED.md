@@ -66,15 +66,26 @@ does not start handing everyone who downloads a photo the GPS of the author's
 home. If you *do* want full EXIF passed through to published files, that is a
 separate change to the resize pipeline and is not implemented here.
 
-### City precision by default
+### Exact precision by default
 
-`geo.precision.default` is `city`: a pin sits at the centre of the matched
-city, not where the shutter was pressed. Authors can opt a single post up to
-`exact` from the composer, and can decline location for a post entirely.
+`geo.precision.default` is `exact`: a pin sits where the shutter was pressed,
+when the photo knows where that was. Authors can drop a single post to `city`,
+or off the map entirely, from the composer.
 
-Exact coordinates on a photo taken at home are a home address. Defaulting to
-that and relying on people to notice is not a defensible default for a photo
-sharing platform.
+This reverses the original default, and the argument for that default has not
+been refuted — exact coordinates on a photo taken at home are a home address,
+and defaulting to that on an instance full of strangers would not be
+defensible. What changed is who the instance is for. It is one person's, and
+at city precision a map is barely a map: every photo from one town lands on
+the same pixel, so a dozen posts collapse into one pin reading "12" that says
+nothing about where any of them were.
+
+`GEO_PRECISION_DEFAULT=city` restores the cautious behaviour and `allow_exact`
+is untouched, so the opt-down path is exactly as it was.
+
+Note what the setting cannot do: it selects the most precise source available,
+it does not invent one. A post whose photos carry no GPS is still pinned at its
+city, because that is all there is to pin it at.
 
 ### No third-party geocoder
 
@@ -295,6 +306,20 @@ handle width at each end — that is where a range input puts the centre of its
 thumb at the extremes, and without the inset the fill drifts off the handles.
 `HANDLE_PX` in `GeoFeed.vue` and `$geo-handle` in `geo.scss` are the same
 number in two places; change one and the fill stops lining up.
+
+### The label's width is fixed, and that is load bearing
+
+The range label sits between the slider and the presets, and its text changes
+as the handles move: "All dates" measures 48px, "Apr 10, 2024 - Sep 14, 2026"
+measures 161px. Left to size itself it made the group 113px wider mid-drag,
+and because the group is pushed rightwards by the status text it is the
+*left* edge that moves - so the slider slid out from under the cursor while
+being dragged. Near a wrap threshold (around 850px) it was worse: the group
+jumped between the first and second row of the bar on alternate frames.
+
+So the label is `flex: 0 0 11.5rem` with the overflow clipped rather than
+allowed to grow, which makes the group's width constant in every state and in
+every locale. Give it back its intrinsic width and the flicker returns.
 
 ### In the bar, wrapping rather than hiding
 
@@ -576,7 +601,7 @@ All keys live in `config/geo.php`; the env vars are documented in
 | `geo.exif.max_read_bytes` | `8388608` | HEIC keeps its EXIF item in `mdat`, sometimes megabytes in. |
 | `geo.autotag.enabled` | `true` | Assign the nearest city when the author sets none. |
 | `geo.autotag.max_distance_km` | `50` | Never guess a city further away than this. |
-| `geo.precision.default` | `city` | `city` or `exact`. |
+| `geo.precision.default` | `exact` | `exact` or `city`. See [Exact precision by default](#exact-precision-by-default). |
 | `geo.precision.allow_exact` | `true` | Whether authors may opt a post up to exact. |
 | `geo.feed.cluster_max_zoom` | `12` | Below this zoom, results are grid clusters. |
 | `geo.feed.max_results` | `250` | Pins per viewport. |
@@ -625,9 +650,21 @@ that column drives federation and cache invalidation elsewhere.
 ```bash
 php artisan geo:backfill --places              # historical posts → pins
 php artisan geo:backfill --media               # re-read EXIF from stored files
+php artisan geo:backfill --repin               # re-derive pins at the current precision
 php artisan geo:backfill --places --dry-run    # report only
 php artisan geo:backfill --places --limit=1000
 ```
+
+`--repin` is for after `geo.precision.default` changes. `resolve()` leaves an
+existing pin alone unless it is forced, so a post pinned at its city under the
+old setting has a more precise position available and no way to reach it.
+Only posts whose own photos carry GPS are candidates — one pinned from its
+`place_id` has nothing better to offer, and the count at the end says how many
+were already as precise as they can be.
+
+Expect it to move only recent posts. Anything uploaded before this feature
+existed had its EXIF stripped by the resize pipeline, so it has no photo
+coordinates to be precise about.
 
 `--media` will have a low hit rate: anything the resize pipeline has already
 touched lost its EXIF before this feature existed. It is worth running once

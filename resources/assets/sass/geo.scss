@@ -150,6 +150,10 @@ $geo-handle-half: 7px;
 	display: flex;
 	align-items: center;
 	flex-shrink: 0;
+
+	// Explicit, because the mobile query below opts back into wrapping and
+	// the two must not be confused: above 768px this is one row, always.
+	flex-wrap: nowrap;
 	gap: 0.5rem;
 
 	// Below md the bar has wrapped and this has lines of its own. Two of
@@ -266,11 +270,24 @@ $geo-handle-half: 7px;
 		}
 	}
 
+	// Fixed width, not shrink-to-fit, and this is load bearing.
+	//
+	// The text changes as the handles move: "All dates" measures 48px, "Apr
+	// 10, 2024 - Sep 14, 2026" measures 161px. A label that resizes takes the
+	// whole group with it, and the group is pushed rightwards by the status
+	// text, so the *left* edge moves - which is where the slider is. Dragging
+	// a handle then slides the slider out from under the cursor, and at
+	// window widths near a wrap threshold the group jumps between the first
+	// and second row of the bar on alternate frames.
+	//
+	// Clipping rather than growing means no locale or date format can
+	// reintroduce it.
 	&__label {
-		flex-shrink: 0;
+		flex: 0 0 11.5rem;
+		overflow: hidden;
+		text-align: center;
+		text-overflow: ellipsis;
 		white-space: nowrap;
-
-		// Stops the label reflowing the bar as the digits change under a drag.
 		font-variant-numeric: tabular-nums;
 
 		@media (max-width: 767.98px) {
@@ -280,6 +297,12 @@ $geo-handle-half: 7px;
 
 	&__presets {
 		flex-shrink: 0;
+
+		// Bootstrap's .btn-group is already inline-flex and nowrap; saying so
+		// here means the four buttons stay on one line whatever else on the
+		// page decides about .btn-group.
+		display: inline-flex;
+		flex-wrap: nowrap;
 
 		@media (max-width: 767.98px) {
 			order: 1;

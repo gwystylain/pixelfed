@@ -62,14 +62,22 @@ return [
     /*
     | Coordinate precision written to the status, i.e. where the pin lands.
     |
-    |   city  — snap to the centre of the matched city (default, privacy safe)
-    |   exact — the coordinates recorded by the camera
+    |   exact — the coordinates recorded by the camera (default)
+    |   city  — snap to the centre of the matched city
     |
-    | Authors can opt a single post up to `exact` from the composer; they can
-    | never opt below the instance default.
+    | `exact` is the default because this is a personal instance and a map of
+    | city centres is not worth having: every photo from one town lands on the
+    | same pixel. Understand what it means before running it on an instance
+    | with strangers on it — an exact pin on a photo taken at home is a home
+    | address, published. `GEO_PRECISION_DEFAULT=city` restores the cautious
+    | behaviour, and authors can still drop a single post to city precision,
+    | or off the map entirely, from the composer.
+    |
+    | A post with no photo GPS is pinned at its city whatever this says: the
+    | setting picks the most precise source available, it cannot invent one.
     */
     'precision' => [
-        'default' => env('GEO_PRECISION_DEFAULT', 'city'),
+        'default' => env('GEO_PRECISION_DEFAULT', 'exact'),
 
         // Allow authors to choose `exact` for an individual post.
         'allow_exact' => env('GEO_PRECISION_ALLOW_EXACT', true),
