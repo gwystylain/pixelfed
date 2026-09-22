@@ -159,6 +159,15 @@ and a `chown -R` of its own, so host ownership never reaches the image.
 Image tag = fork tag without the `v`. Do not `docker rmi` the previous image
 until the new one has been running for a while; it is the rollback.
 
+**Since v0.14.x the build compiles ffmpeg from source.** Upstream made the
+Dockerfile multi-stage: the first stage fetches the ffmpeg source
+(`ARG FFMPEG_VERSION`, 9.0.1 at the time of writing) and builds it, and the
+runtime stage copies `ffmpeg`, `ffprobe` and its libraries in. Expect the
+image build to take far longer than the few minutes it used to — budget
+tens of minutes on this box, and do not start it inside the downtime
+window. The runtime contract is unchanged: same `serversideup/php` base,
+same `/var/www/html`, same uid/gid 33.
+
 ## `.env`
 
 A real `.env` file on the SSD dataset, owned `33:33`, mode `644`, bind-mounted
@@ -233,6 +242,15 @@ services:
       - "8095:8080"
     environment:
       SSL_MODE: "off"                    # TLS terminates at the proxy
+
+      # Both added by upstream at v0.14.x. The Caddy directive stops the
+      # service worker being served from cache, which otherwise pins
+      # browsers to the previous release's assets after an upgrade.
+      LOG_OUTPUT_LEVEL: "error"
+      CADDY_SERVER_EXTRA_DIRECTIVES: |
+        @service_worker path /sw.js
+        header @service_worker Cache-Control "no-cache"
+
       PHP_POST_MAX_SIZE: "500M"
       PHP_UPLOAD_MAX_FILE_SIZE: "500M"
       PHP_OPCACHE_ENABLE: "1"

@@ -506,6 +506,13 @@ were broken:
 - 0.12.10 also removed the `validemail` and `twofactor` middleware aliases
   (`1d96c9405`). `routes/geo.php` named both; every geo route would have
   thrown.
+- 0.14.3 was the first merge where nothing broke, across two minor releases,
+  1713 commits and Laravel 12 → 13. That is not luck to rely on: the same
+  merge rewrote the media upload path in `ApiV1Controller`, which is where
+  the feature's most fragile assumption lives. `$media->save()` still
+  precedes `ImageOptimize::dispatch()`, so the EXIF read still wins the
+  race — but that had to be read to know it, and it is the one check that
+  would fail silently, as photos quietly arriving with no coordinates.
 
 So after every merge, diff the incoming range against the things the feature
 *depends on*, not just the files it *edits*:
@@ -518,8 +525,15 @@ git diff --stat <old-base> vX.Y.Z -- \
   app/Services/PlaceService.php app/Services/StatusService.php \
   app/Services/UserFilterService.php
 
-# Every `use App\...` in the feature still resolves?
-grep -rh '^use App' app/Geo routes/geo.php | sort -u
+# Every `use App\...` in the feature still resolves? (as files, not just names)
+grep -rh '^use App' app/Geo routes/geo.php | sed 's/^use //; s/;$//' | sort -u |
+  while read -r c; do f="$(echo "$c" | sed 's|\|/|g; s|^App/|app/|').php"; [ -f "$f" ] || echo "MISSING: $c"; done
+
+# The upload ordering the EXIF read depends on: save() must come before dispatch()
+grep -n 'ImageOptimize::dispatch\|$media->save()' app/Http/Controllers/Api/ApiV1Controller.php
+
+# The post pane mounts 24 upstream components — did any of them move?
+git diff --stat <old-base> vX.Y.Z --   resources/assets/components/partials/TimelineStatus.vue   resources/assets/components/partials/post resources/assets/components/presenter   resources/assets/js/spa.js resources/assets/sass/spa.scss
 
 # Every middleware routes/geo.php names is still defined in bootstrap/app.php?
 grep -oE "middleware\(\[[^]]+\]" routes/geo.php
