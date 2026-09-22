@@ -4,7 +4,6 @@ namespace App\Jobs\ImageOptimizePipeline;
 
 use App\Models\Media;
 use App\Util\Media\Image;
-use Carbon\Carbon;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -65,15 +64,14 @@ class ImageThumbnail implements ShouldQueue
         try {
             $img = new Image;
             $img->resizeThumbnail($media);
-        } catch (\Exception $e) {
-            if (config('app.dev_log')) {
-                Log::error('Thumbnail generation failed: '.$e->getMessage());
-            }
-
-            return;
+        } catch (\Throwable $e) {
+            // Keep going: returning here left the media without processed_at and
+            // never dispatched ImageUpdate, so it never reached cloud storage and
+            // its status never federated.
+            Log::error("ImageThumbnail: media {$media->id} has no thumbnail [".$e::class.']: '.$e->getMessage());
         }
 
-        $media->processed_at = Carbon::now();
+        $media->processed_at = now();
         $media->save();
 
         ImageUpdate::dispatch($media)->onQueue('mmo');

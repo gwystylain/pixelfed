@@ -24,7 +24,10 @@ trait AdminDirectoryController
         return view('admin.directory.home');
     }
 
-    public function directoryInitialData(Request $request)
+    /**
+     * @return mixed[]
+     */
+    public function directoryInitialData(Request $request): array
     {
         $res = [];
 
@@ -74,7 +77,7 @@ trait AdminDirectoryController
         $res['activitypub_enabled'] = (bool) config_cache('federation.activitypub.enabled');
 
         $res['feature_config'] = [
-            'media_types' => Str::of(config_cache('pixelfed.media_types'))->explode(','),
+            'media_types' => explode(',', config_cache('pixelfed.media_types')),
             'image_quality' => config_cache('pixelfed.image_quality'),
             'optimize_image' => (bool) config_cache('pixelfed.optimize_image'),
             'max_photo_size' => config_cache('pixelfed.max_photo_size'),
@@ -101,7 +104,8 @@ trait AdminDirectoryController
             'media_types' => [
                 'required',
                 function ($attribute, $value, $fail) {
-                    if (! in_array('image/jpeg', $value->toArray()) || ! in_array('image/png', $value->toArray())) {
+                    $types = is_array($value) ? $value : collect($value)->toArray();
+                    if (! in_array('image/jpeg', $types) || ! in_array('image/png', $types)) {
                         $fail('You must enable image/jpeg and image/png support.');
                     }
                 },
@@ -249,7 +253,7 @@ trait AdminDirectoryController
             'curated_onboarding' => (bool) config_cache('instance.curated_registration.enabled'),
             'activitypub_enabled' => config_cache('federation.activitypub.enabled'),
             'oauth_enabled' => (bool) config_cache('pixelfed.oauth_enabled'),
-            'media_types' => Str::of(config_cache('pixelfed.media_types'))->explode(','),
+            'media_types' => explode(',', config_cache('pixelfed.media_types')),
             'image_quality' => config_cache('pixelfed.image_quality'),
             'optimize_image' => config_cache('pixelfed.optimize_image'),
             'max_photo_size' => config_cache('pixelfed.max_photo_size'),
@@ -269,7 +273,8 @@ trait AdminDirectoryController
             'media_types' => [
                 'required',
                 function ($attribute, $value, $fail) {
-                    if (! in_array('image/jpeg', $value->toArray()) || ! in_array('image/png', $value->toArray())) {
+                    $types = is_array($value) ? $value : collect($value)->toArray();
+                    if (! in_array('image/jpeg', $types) || ! in_array('image/png', $types)) {
                         $fail('You must enable image/jpeg and image/png support.');
                     }
                 },
@@ -301,7 +306,7 @@ trait AdminDirectoryController
         $bannerImage = ConfigCache::whereK('app.banner_image')->first();
         $directory = ConfigCache::whereK('pixelfed.directory')->first();
         if (! $bannerImage && ! $directory || empty($directory->v)) {
-            return;
+            return null;
         }
         $directoryArr = json_decode($directory->v, true);
         $path = isset($directoryArr['banner_image']) ? $directoryArr['banner_image'] : false;
@@ -311,7 +316,7 @@ trait AdminDirectoryController
             'public/headers/missing.png',
         ];
         if (! $path || in_array($path, $protected)) {
-            return;
+            return null;
         }
         if (Storage::exists($directoryArr['banner_image'])) {
             Storage::delete($directoryArr['banner_image']);
@@ -386,7 +391,7 @@ trait AdminDirectoryController
         return $existing;
     }
 
-    public function directorySaveTestimonial(Request $request)
+    public function directorySaveTestimonial(Request $request): array
     {
         $this->validate($request, [
             'username' => 'required',
@@ -402,7 +407,7 @@ trait AdminDirectoryController
         $testimonials = $configCache->v ? collect(json_decode($configCache->v, true)) : collect([]);
 
         abort_if($testimonials->contains('profile_id', $user->profile_id), 422, 'Testimonial already exists');
-        abort_if($testimonials->count() == 10, 422, 'You can only have 10 active testimonials');
+        abort_if($testimonials->count() === 10, 422, 'You can only have 10 active testimonials');
 
         $testimonials->push([
             'profile_id' => (string) $user->profile_id,

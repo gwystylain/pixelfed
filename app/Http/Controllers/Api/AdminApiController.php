@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\AdminInstance;
+use App\Http\Resources\AdminProfile;
 use App\Http\Resources\AdminUser;
 use App\Jobs\DeletePipeline\DeleteAccountPipeline;
 use App\Jobs\DeletePipeline\DeleteRemoteProfilePipeline;
@@ -97,7 +98,10 @@ class AdminApiController extends Controller
         return $appeals;
     }
 
-    public function autospamHandle(Request $request)
+    /**
+     * @return 'success'[]
+     */
+    public function autospamHandle(Request $request): array
     {
         abort_if(! $request->user() || ! $request->user()->token(), 404);
 
@@ -281,6 +285,10 @@ class AdminApiController extends Controller
 
                     $r['status'] = $status;
 
+                    if ($status['local'] && isset($status['account']['id'])) {
+                        $r['status']['user_id'] = (string) AccountService::getUserIdFromProfileId($status['account']['id']);
+                    }
+
                     if (isset($status['in_reply_to_id'])) {
                         $r['parent'] = StatusService::get($status['in_reply_to_id'], false);
                     }
@@ -288,8 +296,11 @@ class AdminApiController extends Controller
 
                 if ($report->object_type === Profile::class) {
                     $acct = AccountService::get($report->object_id, true);
-                    if ($acct) {
+                    if ($acct && isset($acct['local'])) {
                         $r['account'] = $acct;
+                        if ($acct['local']) {
+                            $r['account']['user_id'] = (string) AccountService::getUserIdFromProfileId($acct['id']);
+                        }
                     }
                 }
 
@@ -549,24 +560,18 @@ class AdminApiController extends Controller
         $action = $request->input('action');
 
         abort_if($user->is_admin == true && $action !== 'refresh_stats', 400, 'Cannot moderate admin accounts');
-
         if ($action === 'delete') {
             if (config('pixelfed.account_deletion') == false) {
                 abort(404);
             }
-
             abort_if($user->is_admin, 400, 'Cannot delete an admin account.');
-
             $ts = now()->addMonth();
-
             $user->status = 'delete';
             $user->delete_after = $ts;
             $user->save();
-
             $profile->status = 'delete';
             $profile->delete_after = $ts;
             $profile->save();
-
             ModLogService::boot()
                 ->objectUid($profile->id)
                 ->objectId($profile->id)
@@ -575,10 +580,8 @@ class AdminApiController extends Controller
                 ->action('admin.user.delete')
                 ->accessLevel('admin')
                 ->save();
-
             PublicTimelineService::deleteByProfileId($profile->id);
             NetworkTimelineService::deleteByProfileId($profile->id);
-
             if ($profile->user_id) {
                 DB::table('oauth_access_tokens')->whereUserId($user->id)->delete();
                 DB::table('oauth_auth_codes')->whereUserId($user->id)->delete();
@@ -603,7 +606,9 @@ class AdminApiController extends Controller
                 'status' => 200,
                 'msg' => 'deleted',
             ];
-        } elseif ($action === 'refresh_stats') {
+        }
+
+        if ($action === 'refresh_stats') {
             $profile->following_count = DB::table('followers')->whereProfileId($user->profile_id)->count();
             $profile->followers_count = DB::table('followers')->whereFollowingId($user->profile_id)->count();
             $statusCount = Status::whereProfileId($user->profile_id)
@@ -730,9 +735,9 @@ class AdminApiController extends Controller
             ->when($filter, function ($query, $filter) {
                 if ($filter === 'all') {
                     return $query;
-                } else {
-                    return $query->where($filter, true);
                 }
+
+                return $query->where($filter, true);
             })
             ->when($sortBy, function ($query, $sortBy) use ($sort) {
                 return $query->orderBy($sortBy, $sort);
@@ -862,5 +867,233 @@ class AdminApiController extends Controller
 
             return $res;
         });
+    }
+
+    public function getPosts(Request $request)
+    {
+        abort_if(! $request->user() || ! $request->user()->token(), 404);
+        abort_unless($request->user()->is_admin == 1, 404);
+        abort_unless($request->user()->tokenCan('admin:read'), 404);
+
+        $this->validate($request, [
+            'q' => 'sometimes|nullable|string|max:120',
+            'filter' => 'sometimes|in:all,local,remote,nsfw,unlisted,private',
+            'profile_id' => 'sometimes|nullable|integer',
+            'sort' => 'sometimes|in:asc,desc',
+        ]);
+
+        $q = trim((string) $request->input('q'));
+        $filter = $request->input('filter', 'local');
+        $profileId = $request->input('profile_id');
+        $sort = $request->input('sort', 'desc') === 'asc' ? 'asc' : 'desc';
+
+        $query = Status::query()
+            ->whereNull('reblog_of_id')
+            ->when($profileId, fn ($query) => $query->whereProfileId($profileId))
+            ->when($filter === 'local', fn ($query) => $query->whereNull('uri'))
+            ->when($filter === 'remote', fn ($query) => $query->whereNotNull('uri'))
+            ->when($filter === 'nsfw', fn ($query) => $query->whereIsNsfw(true))
+            ->when($filter === 'unlisted', fn ($query) => $query->whereScope('unlisted'))
+            ->when($filter === 'private', fn ($query) => $query->whereScope('private'));
+
+        if ($q !== '') {
+            if (ctype_digit($q)) {
+                $query->whereId($q);
+            } elseif (str_starts_with($q, '@')) {
+                $profile = Profile::whereUsername(ltrim($q, '@'))->first();
+
+                if (! $profile) {
+                    return response()->json([
+                        'data' => [],
+                        'meta' => [
+                            'path' => $request->url(),
+                            'per_page' => 30,
+                            'next_cursor' => null,
+                            'prev_cursor' => null,
+                        ],
+                    ]);
+                }
+
+                $query->whereProfileId($profile->id);
+            } else {
+                $query->where('caption', 'like', '%'.$q.'%');
+            }
+        }
+
+        $paginator = $query->orderBy('id', $sort)->cursorPaginate(30)->withQueryString();
+
+        $data = $paginator->getCollection()
+            ->map(fn ($status) => StatusService::get($status->id, false))
+            ->filter()
+            ->values();
+
+        return response()->json([
+            'data' => $data,
+            'meta' => [
+                'path' => $paginator->path(),
+                'per_page' => $paginator->perPage(),
+                'next_cursor' => $paginator->nextCursor()?->encode(),
+                'prev_cursor' => $paginator->previousCursor()?->encode(),
+            ],
+        ]);
+    }
+
+    public function getPost(Request $request)
+    {
+        abort_if(! $request->user() || ! $request->user()->token(), 404);
+        abort_unless($request->user()->is_admin == 1, 404);
+        abort_unless($request->user()->tokenCan('admin:read'), 404);
+
+        $this->validate($request, [
+            'id' => 'required|integer',
+        ]);
+
+        $status = Status::findOrFail($request->input('id'));
+        $res = StatusService::get($status->id, false);
+        abort_if(! $res, 404);
+
+        $profile = $status->profile;
+
+        return response()->json([
+            'data' => $res,
+            'meta' => [
+                'is_local' => $status->uri === null,
+                'type' => $status->type,
+                'scope' => $status->scope,
+                'is_nsfw' => (bool) $status->is_nsfw,
+                'report_count' => Report::whereObjectType(Status::class)
+                    ->whereObjectId($status->id)
+                    ->count(),
+                'open_report_count' => Report::whereObjectType(Status::class)
+                    ->whereObjectId($status->id)
+                    ->whereNull('admin_seen')
+                    ->count(),
+                'autospam' => AccountInterstitial::whereItemType(Status::class)
+                    ->whereItemId($status->id)
+                    ->whereType('post.autospam')
+                    ->whereNull('appeal_handled_at')
+                    ->exists(),
+                'profile' => [
+                    'id' => (string) $profile->id,
+                    'username' => $profile->username,
+                    'is_local' => $profile->domain === null,
+                    'user_id' => $profile->user_id ? (string) $profile->user_id : null,
+                    'is_admin' => (bool) ($profile->user?->is_admin ?? false),
+                    'moderation' => [
+                        'unlisted' => (bool) $profile->unlisted,
+                        'cw' => (bool) $profile->cw,
+                        'no_autolink' => (bool) $profile->no_autolink,
+                    ],
+                ],
+            ],
+        ]);
+    }
+
+    public function getProfiles(Request $request)
+    {
+        abort_if(! $request->user() || ! $request->user()->token(), 404);
+        abort_unless($request->user()->is_admin == 1, 404);
+        abort_unless($request->user()->tokenCan('admin:read'), 404);
+
+        $this->validate($request, [
+            'q' => 'sometimes|nullable|string|max:120',
+            'filter' => 'sometimes|in:all,local,remote',
+            'sort_by' => 'sometimes|in:id,followers_count,status_count',
+            'sort' => 'sometimes|in:asc,desc',
+        ]);
+
+        $q = ltrim(trim((string) $request->input('q')), '@');
+        $filter = $request->input('filter', 'all');
+        $sortBy = $request->input('sort_by', 'id');
+        $sort = $request->input('sort', 'desc') === 'asc' ? 'asc' : 'desc';
+
+        $query = Profile::query()
+            ->whereNull('status')
+            ->when($filter === 'local', fn ($query) => $query->whereNull('domain'))
+            ->when($filter === 'remote', fn ($query) => $query->whereNotNull('domain'))
+            ->when($q !== '', fn ($query) => $query->where('username', 'like', $q.'%'))
+            ->orderBy($sortBy, $sort);
+
+        if ($sortBy !== 'id') {
+            $query->orderBy('id', $sort);
+        }
+
+        return AdminProfile::collection($query->cursorPaginate(20)->withQueryString());
+    }
+
+    public function getProfile(Request $request)
+    {
+        abort_if(! $request->user() || ! $request->user()->token(), 404);
+        abort_unless($request->user()->is_admin == 1, 404);
+        abort_unless($request->user()->tokenCan('admin:read'), 404);
+
+        $this->validate($request, [
+            'id' => 'required|integer',
+        ]);
+
+        $profile = Profile::findOrFail($request->input('id'));
+
+        return (new AdminProfile($profile))->additional([
+            'meta' => [
+                'report_count' => Report::whereReportedProfileId($profile->id)->count(),
+                'open_report_count' => Report::whereReportedProfileId($profile->id)
+                    ->whereNull('admin_seen')
+                    ->count(),
+                'autospam_count' => $profile->user_id
+                    ? AccountInterstitial::whereUserId($profile->user_id)
+                        ->whereType('post.autospam')
+                        ->whereNull('appeal_handled_at')
+                        ->count()
+                    : 0,
+                'is_admin' => (bool) ($profile->user?->is_admin ?? false),
+            ],
+        ]);
+    }
+
+    public function moderateProfile(Request $request)
+    {
+        abort_if(! $request->user() || ! $request->user()->token(), 404);
+        abort_unless($request->user()->is_admin == 1, 404);
+        abort_unless($request->user()->tokenCan('admin:write'), 404);
+
+        $this->validate($request, [
+            'id' => 'required|integer',
+            'key' => 'required|in:unlisted,cw,no_autolink',
+            'value' => 'required',
+        ]);
+
+        $profile = Profile::findOrFail($request->input('id'));
+
+        if ($profile->user_id && $profile->user && $profile->user->is_admin) {
+            return response()->json(['error' => 'Cannot moderate admin accounts'], 400);
+        }
+
+        $key = $request->input('key');
+        $value = (bool) filter_var($request->input('value'), FILTER_VALIDATE_BOOLEAN);
+
+        $profile->{$key} = $value;
+        $profile->save();
+
+        if ($key === 'unlisted' && $value) {
+            Status::whereProfileId($profile->id)
+                ->whereScope('public')
+                ->orderByDesc('id')
+                ->limit(500)
+                ->pluck('id')
+                ->each(function ($id) {
+                    PublicTimelineService::del($id);
+                    NetworkTimelineService::del($id);
+                });
+        }
+
+        AccountService::del($profile->id);
+        Cache::forget('pf:bouncer_v0:exemption_by_pid:'.$profile->id);
+        Cache::forget('pf:bouncer_v0:recent_by_pid:'.$profile->id);
+
+        if ($profile->user_id) {
+            Cache::forget('pf-admin-api:getUser:byId:'.$profile->user_id);
+        }
+
+        return new AdminProfile($profile->fresh());
     }
 }

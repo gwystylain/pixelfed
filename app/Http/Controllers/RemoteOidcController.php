@@ -61,6 +61,12 @@ class RemoteOidcController extends Controller
         if ($mappedUser) {
             $this->guarder()->login($mappedUser->user);
 
+            // OIDC accounts have a random, unknowable password, so they can
+            // never satisfy the sudo-mode (RequirePassword / dangerzone) prompt.
+            // Mark the session password-confirmed at SSO login so they can reach
+            // dangerzone-gated settings within the normal confirmation window.
+            $request->session()->passwordConfirmed();
+
             return redirect('/');
         }
 
@@ -76,6 +82,10 @@ class RemoteOidcController extends Controller
             'user_id' => $user->id,
             'oidc_id' => $userInfoId,
         ]);
+
+        // See note above: mark the freshly-registered OIDC session
+        // password-confirmed so dangerzone routes are reachable.
+        $request->session()->passwordConfirmed();
 
         return redirect('/');
     }
@@ -121,7 +131,7 @@ class RemoteOidcController extends Controller
         return Auth::guard();
     }
 
-    private function ensure_valid_username($starting_username)
+    private function ensure_valid_username($starting_username): string
     {
         $starting_username = explode('@', $starting_username)[0];
         $temp_username = preg_replace('/[^a-z0-9_]+/i', '', $starting_username);

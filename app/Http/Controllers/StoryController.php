@@ -34,7 +34,7 @@ class StoryController extends StoryComposeController
         }
         $pid = $user->profile_id;
 
-        if (config('database.default') == 'pgsql') {
+        if (db_is_pgsql()) {
             $s = Cache::remember('pf:stories:recent-by-id:'.$pid, 900, function () use ($pid) {
                 return Story::select('stories.*', 'followers.following_id')
                     ->leftJoin('followers', 'followers.following_id', 'stories.profile_id')
@@ -162,7 +162,7 @@ class StoryController extends StoryComposeController
 
                 return $res;
             })->toArray();
-        if (count($stories) == 0) {
+        if (count($stories) === 0) {
             return [];
         }
         $cursor = count($stories) - 1;
@@ -290,7 +290,7 @@ class StoryController extends StoryComposeController
         }
         $pid = $profile->id;
 
-        return view('stories.show_remote', compact('pid'));
+        return view('stories.show_remote', ['pid' => $pid]);
     }
 
     public function pollResults(Request $request)

@@ -44,9 +44,7 @@ class Classifier
             return collect($tokens);
         }
 
-        return Str::of($string)
-            ->lower()
-            ->matchAll('/[[:alpha:]]+/u');
+        return Str::matchAll('/[[:alpha:]]+/u', Str::lower($string));
     }
 
     /**
@@ -119,7 +117,7 @@ class Classifier
         } else {
             $ignored = explode(',', $ignored);
         }
-        if ($type == 'spam' && in_array($word, $ignored)) {
+        if ($type === 'spam' && in_array($word, $ignored)) {
             return;
         }
         if (! isset($this->words[$type][$word])) {

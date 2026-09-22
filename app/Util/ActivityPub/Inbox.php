@@ -5,19 +5,23 @@ namespace App\Util\ActivityPub;
 use App\Util\ActivityPub\Inbox\HandlesAnnouncements;
 use App\Util\ActivityPub\Inbox\HandlesCreates;
 use App\Util\ActivityPub\Inbox\HandlesDeletes;
+use App\Util\ActivityPub\Inbox\HandlesFeatureRequests;
 use App\Util\ActivityPub\Inbox\HandlesFlags;
 use App\Util\ActivityPub\Inbox\HandlesFollows;
 use App\Util\ActivityPub\Inbox\HandlesLikes;
 use App\Util\ActivityPub\Inbox\HandlesMoves;
+use App\Util\ActivityPub\Inbox\HandlesQuoteRequests;
 use App\Util\ActivityPub\Inbox\HandlesStories;
 use App\Util\ActivityPub\Inbox\HandlesUndos;
 use App\Util\ActivityPub\Inbox\HandlesUpdates;
 use App\Util\ActivityPub\Inbox\InboxHelpers;
 use App\Util\ActivityPub\Validator\Accept as AcceptValidator;
 use App\Util\ActivityPub\Validator\Announce as AnnounceValidator;
+use App\Util\ActivityPub\Validator\FeatureRequestValidator;
 use App\Util\ActivityPub\Validator\Follow as FollowValidator;
 use App\Util\ActivityPub\Validator\Like as LikeValidator;
 use App\Util\ActivityPub\Validator\MoveValidator;
+use App\Util\ActivityPub\Validator\QuoteRequestValidator;
 use App\Util\ActivityPub\Validator\RejectValidator;
 use Illuminate\Support\Facades\Log;
 
@@ -26,10 +30,12 @@ class Inbox
     use HandlesAnnouncements;
     use HandlesCreates;
     use HandlesDeletes;
+    use HandlesFeatureRequests;
     use HandlesFlags;
     use HandlesFollows;
     use HandlesLikes;
     use HandlesMoves;
+    use HandlesQuoteRequests;
     use HandlesStories;
     use HandlesUndos;
     use HandlesUpdates;
@@ -125,6 +131,20 @@ class Inbox
 
             case 'Flag':
                 $this->handleFlagActivity();
+                break;
+
+            case 'FeatureRequest':
+                if (FeatureRequestValidator::validate($this->payload) == false) {
+                    return;
+                }
+                $this->handleFeatureRequestActivity();
+                break;
+
+            case 'QuoteRequest':
+                if (QuoteRequestValidator::validate($this->payload) == false) {
+                    return;
+                }
+                $this->handleQuoteRequestActivity();
                 break;
 
             case 'Update':

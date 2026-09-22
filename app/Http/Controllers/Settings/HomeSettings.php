@@ -8,6 +8,7 @@ use App\Models\EmailVerification;
 use App\Models\Media;
 use App\Models\User;
 use App\Services\AccountService;
+use App\Services\EmailVerificationService;
 use App\Services\PronounService;
 use App\Util\Lexer\Autolink;
 use App\Util\Lexer\PrettyNumber;
@@ -32,7 +33,7 @@ trait HomeSettings
         $storage['usedPretty'] = PrettyNumber::size($storage['used']);
         $pronouns = PronounService::get($id);
 
-        return view('settings.home', compact('storage', 'pronouns'));
+        return view('settings.home', ['storage' => $storage, 'pronouns' => $pronouns]);
     }
 
     public function homeUpdate(Request $request)
@@ -41,7 +42,7 @@ trait HomeSettings
             'name' => 'nullable|string|max:'.config('pixelfed.max_name_length'),
             'bio' => 'nullable|string|max:'.config('pixelfed.max_bio_length'),
             'website' => 'nullable|url',
-            'language' => 'nullable|string|min:2|max:5',
+            'language' => 'nullable|string|min:2|max:12',
             'pronouns' => 'nullable|array|max:4',
         ]);
 
@@ -211,11 +212,32 @@ trait HomeSettings
             $user->save();
             $profile->save();
 
+            if ($validate && is_null($user->email_verified_at)) {
+                EmailVerificationService::send($user);
+            }
+
             return redirect('/settings/email')->with('status', 'Email successfully updated!');
-        } else {
+        }
+
+        return redirect('/settings/email');
+
+    }
+
+    public function emailVerificationResend(Request $request)
+    {
+        $user = $request->user();
+
+        if (! is_null($user->email_verified_at)) {
             return redirect('/settings/email');
         }
 
+        if (! EmailVerificationService::send($user)) {
+            return redirect('/settings/email')->withErrors([
+                'email' => __('A verification email was sent a moment ago. Check your inbox, then try again in a minute.'),
+            ]);
+        }
+
+        return redirect('/settings/email')->with('status', __('Verification email sent to').' '.$user->email);
     }
 
     public function avatar()

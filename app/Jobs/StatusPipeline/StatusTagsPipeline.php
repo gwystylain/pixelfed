@@ -82,7 +82,7 @@ class StatusTagsPipeline implements ShouldQueue
             return $tag && $tag['type'] == 'Hashtag' && isset($tag['href'], $tag['name']);
         })
             ->map(function ($tag) use ($status) {
-                $name = substr($tag['name'], 0, 1) == '#' ?
+                $name = str_starts_with($tag['name'], '#') ?
                     substr($tag['name'], 1) : $tag['name'];
 
                 $banned = TrendingHashtagService::getBannedHashtagNames();
@@ -93,7 +93,7 @@ class StatusTagsPipeline implements ShouldQueue
                     }
                 }
 
-                if (config('database.default') === 'pgsql') {
+                if (db_is_pgsql()) {
                     $hashtag = DB::transaction(function () use ($name) {
                         $slug = Str::slug($name, '-', false);
 
@@ -143,7 +143,7 @@ class StatusTagsPipeline implements ShouldQueue
             return $tag &&
                 $tag['type'] == 'Mention' &&
                 isset($tag['href']) &&
-                substr($tag['href'], 0, 8) === 'https://';
+                str_starts_with($tag['href'], 'https://');
         })
             ->map(function ($tag) use ($status) {
                 if (Helpers::validateLocalUrl($tag['href'])) {

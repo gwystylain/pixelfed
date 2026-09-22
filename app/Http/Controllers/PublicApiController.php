@@ -44,29 +44,61 @@ class PublicApiController extends Controller
     {
         if (! $user) {
             return [];
-        } else {
-            return AccountService::get($user->profile_id);
         }
+
+        return AccountService::get($user->profile_id);
     }
 
     public function getStatus(Request $request, $id)
     {
-        abort_if(! $request->user(), 403);
-        $status = StatusService::get($id, false);
+        $user = $request->user();
+
+        abort_if(! $user, 403);
+
+        $viewerId = (int) $user->profile_id;
+
+        $status = Status::query()
+            ->select([
+                'id',
+                'profile_id',
+                'visibility',
+            ])
+            ->find($id);
+
         abort_if(! $status, 404);
-        if (in_array($status['visibility'], ['public', 'unlisted'])) {
-            return $status;
+
+        $authorId = (int) $status->profile_id;
+
+        if ($viewerId === $authorId) {
+            $result = StatusService::get($status->id, false);
+
+            abort_if(! $result, 404);
+
+            return $result;
         }
-        $pid = $request->user()->profile_id;
-        if ($status['account']['id'] == $pid) {
-            return $status;
+
+        switch ($status->visibility) {
+            case 'public':
+            case 'unlisted':
+                break;
+
+            case 'private':
+                abort_unless(
+                    FollowerService::follows($viewerId, $authorId),
+                    404
+                );
+                break;
+
+            case 'direct':
+            default:
+                abort(404);
         }
-        if ($status['visibility'] == 'private') {
-            if (FollowerService::follows($pid, $status['account']['id'])) {
-                return $status;
-            }
-        }
-        abort(404);
+
+        $result = StatusService::get($status->id, false);
+
+        abort_if(! $result, 404);
+
+        return $result;
     }
 
     public function status(Request $request, $username, int $postid): JsonResponse
@@ -141,12 +173,13 @@ class PublicApiController extends Controller
             $scope = ['public', 'unlisted'];
         }
 
+        $replies = collect();
         if ($request->filled('min_id') || $request->filled('max_id')) {
             if ($request->filled('min_id')) {
                 $replies = $status->comments()
                     ->whereNull('reblog_of_id')
                     ->whereIn('scope', $scope)
-                    ->select('id', 'caption', 'local', 'visibility', 'scope', 'is_nsfw', 'profile_id', 'in_reply_to_id', 'type', 'reply_count', 'created_at')
+                    ->select('id', 'caption', 'rendered', 'local', 'visibility', 'scope', 'is_nsfw', 'profile_id', 'in_reply_to_id', 'type', 'reply_count', 'created_at')
                     ->where('id', '>=', $request->min_id)
                     ->orderBy('id', 'desc')
                     ->paginate($limit);
@@ -155,7 +188,7 @@ class PublicApiController extends Controller
                 $replies = $status->comments()
                     ->whereNull('reblog_of_id')
                     ->whereIn('scope', $scope)
-                    ->select('id', 'caption', 'local', 'visibility', 'scope', 'is_nsfw', 'profile_id', 'in_reply_to_id', 'type', 'reply_count', 'created_at')
+                    ->select('id', 'caption', 'rendered', 'local', 'visibility', 'scope', 'is_nsfw', 'profile_id', 'in_reply_to_id', 'type', 'reply_count', 'created_at')
                     ->where('id', '<=', $request->max_id)
                     ->orderBy('id', 'desc')
                     ->paginate($limit);
@@ -164,7 +197,7 @@ class PublicApiController extends Controller
             $replies = Status::whereInReplyToId($status->id)
                 ->whereNull('reblog_of_id')
                 ->whereIn('scope', $scope)
-                ->select('id', 'caption', 'local', 'visibility', 'scope', 'is_nsfw', 'profile_id', 'in_reply_to_id', 'type', 'reply_count', 'created_at')
+                ->select('id', 'caption', 'rendered', 'local', 'visibility', 'scope', 'is_nsfw', 'profile_id', 'in_reply_to_id', 'type', 'reply_count', 'created_at')
                 ->orderBy('id', 'desc')
                 ->paginate($limit);
         }
@@ -200,15 +233,12 @@ class PublicApiController extends Controller
 
             case 'direct':
                 abort(404);
-                break;
 
             case 'draft':
                 abort(404);
-                break;
 
             default:
                 abort(404);
-                break;
         }
     }
 
@@ -267,7 +297,7 @@ class PublicApiController extends Controller
                         return $status;
                     })
                     ->filter(function ($s) use ($filtered) {
-                        return $s && isset($s['account']) && in_array($s['account']['id'], $filtered) == false;
+                        return $s && isset($s['account']) && in_array($s['account']['id'], $filtered) === false;
                     })
                     ->values();
                 $res = $timeline->toArray();
@@ -313,7 +343,7 @@ class PublicApiController extends Controller
                         return $status;
                     })
                     ->filter(function ($s) use ($filtered) {
-                        return $s && isset($s['account']) && in_array($s['account']['id'], $filtered) == false;
+                        return $s && isset($s['account']) && in_array($s['account']['id'], $filtered) === false;
                     })
                     ->values();
 
@@ -348,7 +378,7 @@ class PublicApiController extends Controller
                     return $status;
                 })
                 ->filter(function ($s) use ($filtered) {
-                    return $s && isset($s['account']) && in_array($s['account']['id'], $filtered) == false;
+                    return $s && isset($s['account']) && in_array($s['account']['id'], $filtered) === false;
                 })
                 ->values()
                 ->toArray();
@@ -436,7 +466,7 @@ class PublicApiController extends Controller
                         if (! $status) {
                             return false;
                         }
-                    } catch (\Exception $e) {
+                    } catch (\Exception) {
                         return false;
                     }
                     $status['favourited'] = (bool) LikeService::liked($user->profile_id, $s->id);
@@ -446,60 +476,60 @@ class PublicApiController extends Controller
                     return $status;
                 })
                 ->filter(function ($s) use ($filtered) {
-                    return $s && in_array($s['account']['id'], $filtered) == false;
-                })
-                ->values()
-                ->toArray();
-        } else {
-            return Status::select(
-                'id',
-                'uri',
-                'caption',
-                'profile_id',
-                'type',
-                'in_reply_to_id',
-                'reblog_of_id',
-                'is_nsfw',
-                'scope',
-                'local',
-                'reply_count',
-                'comments_disabled',
-                'place_id',
-                'likes_count',
-                'reblogs_count',
-                'created_at',
-                'updated_at'
-            )
-                ->whereIn('type', $types)
-                ->when(! $textOnlyReplies, function ($q, $textOnlyReplies) {
-                    return $q->whereNull('in_reply_to_id');
-                })
-                ->whereIn('profile_id', $following)
-                ->whereIn('visibility', ['public', 'unlisted', 'private'])
-                ->orderBy('created_at', 'desc')
-                ->limit($limit)
-                ->get()
-                ->map(function ($s) use ($user) {
-                    try {
-                        $status = StatusService::get($s->id, false);
-                        if (! $status) {
-                            return false;
-                        }
-                    } catch (\Exception $e) {
-                        return false;
-                    }
-                    $status['favourited'] = (bool) LikeService::liked($user->profile_id, $s->id);
-                    $status['bookmarked'] = (bool) BookmarkService::get($user->profile_id, $s->id);
-                    $status['reblogged'] = (bool) ReblogService::get($user->profile_id, $s->id);
-
-                    return $status;
-                })
-                ->filter(function ($s) use ($filtered) {
-                    return $s && in_array($s['account']['id'], $filtered) == false;
+                    return $s && isset($s['account']) && in_array($s['account']['id'], $filtered) === false;
                 })
                 ->values()
                 ->toArray();
         }
+
+        return Status::select(
+            'id',
+            'uri',
+            'caption',
+            'profile_id',
+            'type',
+            'in_reply_to_id',
+            'reblog_of_id',
+            'is_nsfw',
+            'scope',
+            'local',
+            'reply_count',
+            'comments_disabled',
+            'place_id',
+            'likes_count',
+            'reblogs_count',
+            'created_at',
+            'updated_at'
+        )
+            ->whereIn('type', $types)
+            ->when(! $textOnlyReplies, function ($q, $textOnlyReplies) {
+                return $q->whereNull('in_reply_to_id');
+            })
+            ->whereIn('profile_id', $following)
+            ->whereIn('visibility', ['public', 'unlisted', 'private'])
+            ->orderBy('created_at', 'desc')
+            ->limit($limit)
+            ->get()
+            ->map(function ($s) use ($user) {
+                try {
+                    $status = StatusService::get($s->id, false);
+                    if (! $status) {
+                        return false;
+                    }
+                } catch (\Exception) {
+                    return false;
+                }
+                $status['favourited'] = (bool) LikeService::liked($user->profile_id, $s->id);
+                $status['bookmarked'] = (bool) BookmarkService::get($user->profile_id, $s->id);
+                $status['reblogged'] = (bool) ReblogService::get($user->profile_id, $s->id);
+
+                return $status;
+            })
+            ->filter(function ($s) use ($filtered) {
+                return $s && isset($s['account']) && in_array($s['account']['id'], $filtered) === false;
+            })
+            ->values()
+            ->toArray();
     }
 
     public function networkTimelineApi(Request $request): JsonResponse|Response
@@ -635,7 +665,7 @@ class PublicApiController extends Controller
                     return $status;
                 })
                 ->filter(function ($s) use ($filtered) {
-                    return $s && isset($s['account']) && in_array($s['account']['id'], $filtered) == false;
+                    return $s && isset($s['account']) && in_array($s['account']['id'], $filtered) === false;
                 })
                 ->values()
                 ->toArray();
@@ -802,7 +832,7 @@ class PublicApiController extends Controller
         return $this->json($status);
     }
 
-    private function determineVisibility($profile, $user)
+    private function determineVisibility($profile, $user): array
     {
         if (! $profile || ! isset($profile['id'])) {
             return [];
@@ -821,16 +851,15 @@ class PublicApiController extends Controller
             $isFollowing = FollowerService::follows($pid, $profile['id']);
 
             return $isFollowing ? ['public', 'unlisted', 'private'] : ['public'];
-        } else {
-            if ($user) {
-                $pid = $user->profile_id;
-                $isFollowing = FollowerService::follows($pid, $profile['id']);
-
-                return $isFollowing ? ['public', 'unlisted', 'private'] : ['public', 'unlisted'];
-            } else {
-                return ['public', 'unlisted'];
-            }
         }
+        if ($user) {
+            $pid = $user->profile_id;
+            $isFollowing = FollowerService::follows($pid, $profile['id']);
+
+            return $isFollowing ? ['public', 'unlisted', 'private'] : ['public', 'unlisted'];
+        }
+
+        return ['public', 'unlisted'];
     }
 
     private function processStatuses($statuses, $user, $onlyMedia)
@@ -849,7 +878,7 @@ class PublicApiController extends Controller
                 }
 
                 return $mastodonStatus;
-            } catch (\Exception $e) {
+            } catch (\Exception) {
                 return null;
             }
         })
@@ -860,8 +889,8 @@ class PublicApiController extends Controller
 
                 if ($onlyMedia) {
                     return isset($status['media_attachments']) &&
-                           is_array($status['media_attachments']) &&
-                           ! empty($status['media_attachments']);
+                        is_array($status['media_attachments']) &&
+                        ! empty($status['media_attachments']);
                 }
 
                 return true;

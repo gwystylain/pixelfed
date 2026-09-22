@@ -16,7 +16,6 @@ use App\Services\NotificationService;
 use App\Services\RelationshipService;
 use App\Services\UserFilterService;
 use App\Transformer\Api\Mastodon\v1\AccountTransformer;
-use Carbon\Carbon;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -56,7 +55,7 @@ class AccountController extends Controller
 
         $action = $request->input('a');
         $allowed = ['like', 'follow'];
-        $timeago = Carbon::now()->subMonths(3);
+        $timeago = now()->subMonths(3);
 
         $profile = $request->user()->profile;
         $following = $profile->following->pluck('id');
@@ -69,7 +68,7 @@ class AccountController extends Controller
             ->orderBy('notifications.created_at', 'desc')
             ->simplePaginate(30);
 
-        return view('account.following', compact('profile', 'notifications'));
+        return view('account.following', ['profile' => $profile, 'notifications' => $notifications]);
     }
 
     public function direct(): View
@@ -82,7 +81,7 @@ class AccountController extends Controller
         $profile = Profile::where('id', '!=', $request->user()->profile_id)
             ->findOrFail($id);
 
-        return view('account.directmessage', compact('id'));
+        return view('account.directmessage', ['id' => $id]);
     }
 
     public function mute(Request $request): JsonResponse|RedirectResponse
@@ -96,7 +95,7 @@ class AccountController extends Controller
         $count = UserFilterService::muteCount($pid);
         $maxLimit = (int) config_cache('instance.user_filters.max_user_mutes');
         abort_if($count >= $maxLimit, 422, self::FILTER_LIMIT_MUTE_TEXT.$maxLimit.' accounts');
-        if ($count == 0) {
+        if ($count === 0) {
             $filterCount = UserFilter::whereUserId($pid)->count();
             abort_if($filterCount >= $maxLimit, 422, self::FILTER_LIMIT_MUTE_TEXT.$maxLimit.' accounts');
         }
@@ -116,7 +115,7 @@ class AccountController extends Controller
                 if ($profile->id == $pid) {
                     return abort(403);
                 }
-                $class = get_class($profile);
+                $class = $profile::class;
                 $filterable['id'] = $profile->id;
                 $filterable['type'] = $class;
                 break;
@@ -134,9 +133,9 @@ class AccountController extends Controller
 
         if ($request->wantsJson()) {
             return response()->json($res);
-        } else {
-            return redirect()->back();
         }
+
+        return redirect()->back();
     }
 
     public function unmute(Request $request): JsonResponse|RedirectResponse
@@ -161,14 +160,13 @@ class AccountController extends Controller
                 if ($profile->id == $pid) {
                     return abort(403);
                 }
-                $class = get_class($profile);
+                $class = $profile::class;
                 $filterable['id'] = $profile->id;
                 $filterable['type'] = $class;
                 break;
 
             default:
                 abort(400);
-                break;
         }
 
         $filter = UserFilter::whereUserId($pid)
@@ -186,9 +184,9 @@ class AccountController extends Controller
 
         if ($request->wantsJson()) {
             return response()->json($res);
-        } else {
-            return redirect()->back();
         }
+
+        return redirect()->back();
     }
 
     public function block(Request $request): JsonResponse|RedirectResponse
@@ -201,7 +199,7 @@ class AccountController extends Controller
         $count = UserFilterService::blockCount($pid);
         $maxLimit = (int) config_cache('instance.user_filters.max_user_blocks');
         abort_if($count >= $maxLimit, 422, self::FILTER_LIMIT_BLOCK_TEXT.$maxLimit.' accounts');
-        if ($count == 0) {
+        if ($count === 0) {
             $filterCount = UserFilter::whereUserId($pid)->whereFilterType('block')->count();
             abort_if($filterCount >= $maxLimit, 422, self::FILTER_LIMIT_BLOCK_TEXT.$maxLimit.' accounts');
         }
@@ -220,7 +218,7 @@ class AccountController extends Controller
                 if ($profile->id == $pid || ($profile->user && $profile->user->is_admin == true)) {
                     return abort(403);
                 }
-                $class = get_class($profile);
+                $class = $profile::class;
                 $filterable['id'] = $profile->id;
                 $filterable['type'] = $class;
 
@@ -272,9 +270,9 @@ class AccountController extends Controller
 
         if ($request->wantsJson()) {
             return response()->json($res);
-        } else {
-            return redirect()->back();
         }
+
+        return redirect()->back();
     }
 
     public function unblock(Request $request): JsonResponse|RedirectResponse
@@ -298,14 +296,13 @@ class AccountController extends Controller
                 if ($profile->id == $pid) {
                     return abort(403);
                 }
-                $class = get_class($profile);
+                $class = $profile::class;
                 $filterable['id'] = $profile->id;
                 $filterable['type'] = $class;
                 break;
 
             default:
                 abort(400);
-                break;
         }
 
         $filter = UserFilter::whereUserId($pid)
@@ -323,9 +320,9 @@ class AccountController extends Controller
 
         if ($request->wantsJson()) {
             return response()->json($res);
-        } else {
-            return redirect()->back();
         }
+
+        return redirect()->back();
     }
 
     public function followRequests(Request $request): View
@@ -333,7 +330,7 @@ class AccountController extends Controller
         $pid = $request->user()->profile->id;
         $followers = FollowRequest::whereFollowingId($pid)->orderBy('id', 'desc')->whereIsRejected(0)->simplePaginate(10);
 
-        return view('account.follow-requests', compact('followers'));
+        return view('account.follow-requests', ['followers' => $followers]);
     }
 
     public function followRequestsJson(Request $request): JsonResponse

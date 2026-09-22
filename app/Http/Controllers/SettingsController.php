@@ -14,7 +14,6 @@ use App\Models\OauthClient;
 use App\Models\ProfileSponsor;
 use App\Models\UserSetting;
 use App\Services\AccountService;
-use Carbon\Carbon;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -44,7 +43,7 @@ class SettingsController extends Controller
     {
         $settings = $request->user()->settings;
 
-        return view('settings.accessibility', compact('settings'));
+        return view('settings.accessibility', ['settings' => $settings]);
     }
 
     public function accessibilityStore(Request $request): RedirectResponse
@@ -144,7 +143,7 @@ class SettingsController extends Controller
         ]);
 
         $profile = $user->profile;
-        $ts = Carbon::now()->addMonth();
+        $ts = now()->addMonth();
         $user->email = $user->id;
         $user->password = '';
         $user->status = 'delete';
@@ -198,7 +197,7 @@ class SettingsController extends Controller
         $sponsors = ProfileSponsor::whereProfileId($request->user()->profile->id)->first();
         $sponsors = $sponsors ? json_decode($sponsors->sponsors, true) : $default;
 
-        return view('settings.sponsor', compact('sponsors'));
+        return view('settings.sponsor', ['sponsors' => $sponsors]);
     }
 
     public function sponsorStore(Request $request): RedirectResponse
@@ -267,7 +266,7 @@ class SettingsController extends Controller
                 $userSettings->other);
         }
 
-        return view('settings.timeline', compact('top', 'replies', 'userSettings'));
+        return view('settings.timeline', ['top' => $top, 'replies' => $replies, 'userSettings' => $userSettings]);
     }
 
     public function updateTimelineSettings(Request $request): RedirectResponse
@@ -307,7 +306,7 @@ class SettingsController extends Controller
             'media_descriptions' => false,
         ];
 
-        return view('settings.media', compact('compose'));
+        return view('settings.media', ['compose' => $compose]);
     }
 
     public function updateMediaSettings(Request $request): RedirectResponse

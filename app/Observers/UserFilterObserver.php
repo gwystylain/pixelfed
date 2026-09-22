@@ -6,6 +6,8 @@ use App\Jobs\HomeFeedPipeline\FeedFollowPipeline;
 use App\Jobs\HomeFeedPipeline\FeedUnfollowPipeline;
 use App\Models\Profile;
 use App\Models\UserFilter;
+use App\Services\FeaturedCollectionService;
+use App\Services\QuoteService;
 use App\Services\UserFilterService;
 
 class UserFilterObserver
@@ -82,6 +84,9 @@ class UserFilterObserver
             case 'block':
                 UserFilterService::block($userFilter->user_id, $userFilter->filterable_id);
                 FeedUnfollowPipeline::dispatch($userFilter->user_id, $userFilter->filterable_id)->onQueue('feed');
+                // user_id is the blocking profile id, filterable_id the blocked profile
+                FeaturedCollectionService::revokeForActor($userFilter->user_id, $userFilter->filterable_id);
+                QuoteService::revokeForActor($userFilter->user_id, $userFilter->filterable_id);
                 break;
         }
     }

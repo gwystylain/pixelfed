@@ -6,18 +6,17 @@ use App\Jobs\StoryPipeline\StoryDelete;
 use App\Jobs\StoryPipeline\StoryFanout;
 use App\Jobs\StoryPipeline\StoryReactionDeliver;
 use App\Jobs\StoryPipeline\StoryReplyDeliver;
-use App\Models\Conversation;
-use App\Models\DirectMessage;
-use App\Models\Notification;
 use App\Models\Poll;
 use App\Models\PollVote;
 use App\Models\Report;
 use App\Models\Status;
 use App\Models\Story;
+use App\Services\DirectMessageService;
 use App\Services\FollowerService;
 use App\Services\MediaPathService;
 use App\Services\StoryIndexService;
 use App\Services\StoryService;
+use App\Services\UserFilterService;
 use App\Services\UserRoleService;
 use App\Util\Media\ImageDriverManager;
 use FFMpeg;
@@ -91,16 +90,19 @@ class StoryComposeController extends Controller
         if ($story->type === 'video') {
 
             if ($localFs) {
-                $videoPath = storage_path('app/'.$path);
+                $media = FFMpeg::fromDisk('local')->open($path);
             } else {
-                $tempPath = sys_get_temp_dir().'/'.Str::random(40).'.mp4';
+                $tempName = Str::random(40).'.mp4';
+                $tempPath = sys_get_temp_dir().'/'.$tempName;
                 file_put_contents($tempPath, $disk->get($path));
-                $videoPath = $tempPath;
+                $media = FFMpeg::fromDisk(Storage::build([
+                    'driver' => 'local',
+                    'root' => sys_get_temp_dir(),
+                ]))->open($tempName);
             }
 
             try {
-                $video = FFMpeg::open($videoPath);
-                $duration = $video->getDurationInSeconds();
+                $duration = $media->getDurationInSeconds();
                 $res['media_duration'] = $duration;
 
                 if ($duration > 500) {
@@ -128,10 +130,8 @@ class StoryComposeController extends Controller
             'image/jpeg',
             'image/png',
             'video/mp4',
-        ]) == false) {
+        ]) === false) {
             abort(400, 'Invalid media type');
-
-            return;
         }
 
         $storagePath = MediaPathService::story($user->profile);
@@ -218,7 +218,7 @@ class StoryComposeController extends Controller
 
                 $img = $this->imageManager->decodePath($path);
                 $img = $img->crop($width, $height, $x, $y);
-                $img = $img->coverDown(1080, 1920);
+                $img = $img->cover(1080, 1920);
 
                 if (in_array(strtolower($extension), ['jpg', 'jpeg'])) {
                     $encoder = new JpegEncoder($quality);
@@ -236,7 +236,7 @@ class StoryComposeController extends Controller
 
                 $img = $this->imageManager->decodeBinary($fileContent);
                 $img = $img->crop($width, $height, $x, $y);
-                $img = $img->coverDown(1080, 1920);
+                $img = $img->cover(1080, 1920);
 
                 if (in_array(strtolower($extension), ['jpg', 'jpeg'])) {
                     $encoder = new JpegEncoder($quality);
@@ -395,7 +395,10 @@ class StoryComposeController extends Controller
         $pid = $request->user()->profile_id;
         $ci = $request->input('ci');
         $story = Story::findOrFail($request->input('sid'));
-        abort_if(! FollowerService::follows($pid, $story->profile_id), 403);
+        abort_if(now()->gt($story->expires_at), 404);
+        abort_if($story->profile_id == $pid, 422, 'Cannot vote on your own story');
+        abort_if(! FollowerService::follows($pid, $story->profile_id), 422, 'Cannot vote on a story from an account you do not follow');
+        abort_if(in_array($pid, UserFilterService::blocks($story->profile_id)), 403);
         $poll = Poll::whereStoryId($story->id)->firstOrFail();
 
         $vote = new PollVote;
@@ -448,9 +451,10 @@ class StoryComposeController extends Controller
         abort_if(! in_array($type, $types), 422, 'Invalid story report type');
 
         $story = Story::findOrFail($sid);
-
+        abort_if(now()->gt($story->expires_at), 404);
         abort_if($story->profile_id == $pid, 422, 'Cannot report your own story');
         abort_if(! FollowerService::follows($pid, $story->profile_id), 422, 'Cannot report a story from an account you do not follow');
+        abort_if(in_array($pid, UserFilterService::blocks($story->profile_id)), 403);
 
         if (Report::whereProfileId($pid)
             ->whereObjectType(Story::class)
@@ -488,6 +492,12 @@ class StoryComposeController extends Controller
         $user = $request->user();
         abort_if($user->has_roles && ! UserRoleService::can('can-use-stories', $user->id), 403, 'Invalid permissions for this action');
         $story = Story::findOrFail($request->input('sid'));
+        abort_if(now()->gt($story->expires_at), 404);
+        abort_if(
+            $story->profile_id !== $pid && ! FollowerService::follows($pid, $story->profile_id),
+            403
+        );
+        abort_if(in_array($pid, UserFilterService::blocks($story->profile_id)), 403);
 
         abort_if(! $story->can_react, 422);
         abort_if(StoryService::reactCounter($story->id, $pid) >= 5, 422, 'You have already reacted to this story');
@@ -510,43 +520,24 @@ class StoryComposeController extends Controller
             ? url(Storage::url($story->path))
             : Storage::disk(config('filesystems.default'))->url($story->path);
 
-        $dm = new DirectMessage;
-        $dm->to_id = $story->profile_id;
-        $dm->from_id = $pid;
-        $dm->type = 'story:react';
-        $dm->status_id = $status->id;
-        $dm->meta = json_encode([
-            'story_username' => $story->profile->username,
-            'story_actor_username' => $request->user()->username,
-            'story_id' => $story->id,
-            'story_media_url' => $mediaUrl,
-            'reaction' => $text,
-        ]);
-        $dm->save();
-
-        Conversation::updateOrInsert(
+        // Shows up in the conversation with the story author, who is
+        // notified when they are on this server
+        app(DirectMessageService::class)->storeStoryMessage(
+            $request->user()->profile,
+            $story->profile,
+            'story:react',
+            $text,
             [
-                'to_id' => $story->profile_id,
-                'from_id' => $pid,
+                'story_username' => $story->profile->username,
+                'story_actor_username' => $request->user()->username,
+                'story_id' => $story->id,
+                'story_media_url' => $mediaUrl,
+                'reaction' => $text,
             ],
-            [
-                'type' => 'story:react',
-                'status_id' => $status->id,
-                'dm_id' => $dm->id,
-                'is_hidden' => false,
-            ]
+            $status->id
         );
 
-        if ($story->local) {
-            // generate notification
-            $n = new Notification;
-            $n->profile_id = $dm->to_id;
-            $n->actor_id = $dm->from_id;
-            $n->item_id = $dm->id;
-            $n->item_type = DirectMessage::class;
-            $n->action = 'story:react';
-            $n->save();
-        } else {
+        if (! $story->local) {
             StoryReactionDeliver::dispatch($story, $status)->onQueue('story');
         }
 
@@ -567,6 +558,12 @@ class StoryComposeController extends Controller
         $user = $request->user();
         abort_if($user->has_roles && ! UserRoleService::can('can-use-stories', $user->id), 403, 'Invalid permissions for this action');
         $story = Story::findOrFail($request->input('sid'));
+        abort_if(now()->gt($story->expires_at), 404);
+        abort_if(
+            $story->profile_id !== $pid && ! FollowerService::follows($pid, $story->profile_id),
+            403
+        );
+        abort_if(in_array($pid, UserFilterService::blocks($story->profile_id)), 403);
 
         abort_if(! $story->can_reply, 422);
 
@@ -587,43 +584,24 @@ class StoryComposeController extends Controller
             ? url(Storage::url($story->path))
             : Storage::disk(config('filesystems.default'))->url($story->path);
 
-        $dm = new DirectMessage;
-        $dm->to_id = $story->profile_id;
-        $dm->from_id = $pid;
-        $dm->type = 'story:comment';
-        $dm->status_id = $status->id;
-        $dm->meta = json_encode([
-            'story_username' => $story->profile->username,
-            'story_actor_username' => $request->user()->username,
-            'story_id' => $story->id,
-            'story_media_url' => $mediaUrl,
-            'caption' => $text,
-        ]);
-        $dm->save();
-
-        Conversation::updateOrInsert(
+        // Shows up in the conversation with the story author, who is
+        // notified when they are on this server
+        app(DirectMessageService::class)->storeStoryMessage(
+            $request->user()->profile,
+            $story->profile,
+            'story:comment',
+            $text,
             [
-                'to_id' => $story->profile_id,
-                'from_id' => $pid,
+                'story_username' => $story->profile->username,
+                'story_actor_username' => $request->user()->username,
+                'story_id' => $story->id,
+                'story_media_url' => $mediaUrl,
+                'caption' => $text,
             ],
-            [
-                'type' => 'story:comment',
-                'status_id' => $status->id,
-                'dm_id' => $dm->id,
-                'is_hidden' => false,
-            ]
+            $status->id
         );
 
-        if ($story->local) {
-            // generate notification
-            $n = new Notification;
-            $n->profile_id = $dm->to_id;
-            $n->actor_id = $dm->from_id;
-            $n->item_id = $dm->id;
-            $n->item_type = DirectMessage::class;
-            $n->action = 'story:comment';
-            $n->save();
-        } else {
+        if (! $story->local) {
             StoryReplyDeliver::dispatch($story, $status)->onQueue('story');
         }
 

@@ -9,10 +9,19 @@ use App\Models\User;
 use App\Services\ImportService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 
 class ImportPostController extends Controller
 {
+    public const ALLOWED_EXTENSIONS = [
+        'image/jpeg' => ['jpg', 'jpeg'],
+        'image/jpg' => ['jpg', 'jpeg'],
+        'image/png' => ['png'],
+        'image/webp' => ['webp'],
+        'video/mp4' => ['mp4'],
+    ];
+
     public function __construct()
     {
         $this->middleware('auth');
@@ -149,9 +158,9 @@ class ImportPostController extends Controller
                     ];
                 })->toArray();
 
-                $ip->caption = $c->count() > 1 ?
+                $ip->caption = strip_tags($c->count() > 1 ?
                     $this->formatHashtags($file['title'] ?? '') :
-                    $this->formatHashtags($ip->media[0]['title'] ?? '');
+                    $this->formatHashtags($ip->media[0]['title'] ?? ''));
 
                 $originalFilename = last(explode('/', $ip->media[0]['uri'] ?? ''));
                 $ip->filename = $this->sanitizeFilename($originalFilename);
@@ -164,8 +173,7 @@ class ImportPostController extends Controller
                 })->toArray();
 
                 $creationTimestamp = $c->count() > 1 ?
-                    ($file['creation_timestamp'] ?? null) :
-                    ($media[0]['creation_timestamp'] ?? null);
+                    ($file['creation_timestamp'] ?? null) : ($media[0]['creation_timestamp'] ?? null);
 
                 if ($creationTimestamp) {
                     $ip->creation_date = now()->parse($creationTimestamp);
@@ -224,6 +232,20 @@ class ImportPostController extends Controller
                 'file',
                 $mimes,
                 'max:'.config_cache('pixelfed.max_photo_size'),
+                function ($attribute, $value, $fail) {
+                    if (! $value instanceof UploadedFile) {
+                        $fail('The '.$attribute.' must be a file.');
+
+                        return;
+                    }
+
+                    $mime = $value->getMimeType();
+                    $ext = strtolower($value->getClientOriginalExtension());
+
+                    if (! in_array($ext, self::ALLOWED_EXTENSIONS[$mime] ?? [], true)) {
+                        $fail('The '.$attribute.' extension does not match its content.');
+                    }
+                },
             ],
         ]);
 
@@ -253,27 +275,25 @@ class ImportPostController extends Controller
             if ($exts->contains('mp4')) {
                 if ($exts->contains('jpg', 'png', 'webp')) {
                     return 'photo:video:album';
-                } else {
-                    return 'video:album';
                 }
-            } else {
-                return 'photo:album';
-            }
-        } else {
-            if ($exts->isEmpty()) {
-                return 'photo';
+
+                return 'video:album';
             }
 
-            $ext = $exts[0];
-
-            if (in_array($ext, ['jpg', 'jpeg', 'png', 'webp'])) {
-                return 'photo';
-            } elseif (in_array($ext, ['mp4'])) {
-                return 'video';
-            } else {
-                return 'photo';
-            }
+            return 'photo:album';
         }
+        if ($exts->isEmpty()) {
+            return 'photo';
+        }
+        $ext = $exts[0];
+        if (in_array($ext, ['jpg', 'jpeg', 'png', 'webp'])) {
+            return 'photo';
+        }
+        if (in_array($ext, ['mp4'])) {
+            return 'video';
+        }
+
+        return 'photo';
     }
 
     private function sanitizeFilename($filename): string
@@ -298,9 +318,9 @@ class ImportPostController extends Controller
         if ($user->is_admin) {
             if (! $abortOnFail) {
                 return true;
-            } else {
-                return true;
             }
+
+            return true;
         }
 
         $admin = User::whereIsAdmin(true)->first();

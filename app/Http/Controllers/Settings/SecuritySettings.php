@@ -8,7 +8,6 @@ use BaconQrCode\Renderer\Image\SvgImageBackEnd;
 use BaconQrCode\Renderer\ImageRenderer;
 use BaconQrCode\Renderer\RendererStyle\RendererStyle;
 use BaconQrCode\Writer;
-use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use PragmaRX\Google2FA\Google2FA;
@@ -29,7 +28,7 @@ trait SecuritySettings
             ->limit(5)
             ->get();
 
-        return view('settings.security', compact('activity', 'user', 'devices'));
+        return view('settings.security', ['activity' => $activity, 'user' => $user, 'devices' => $devices]);
     }
 
     public function securityTwoFactorSetup(Request $request)
@@ -45,8 +44,7 @@ trait SecuritySettings
         $qrcode = $google2fa->getQRCodeUrl(
             config('pixelfed.domain.app'),
             $user->email,
-            $key,
-            500
+            $key
         );
 
         $writer = new Writer(
@@ -60,10 +58,13 @@ trait SecuritySettings
         $user->{'2fa_backup_codes'} = json_encode($backups);
         $user->save();
 
-        return view('settings.security.2fa.setup', compact('user', 'qrcode', 'backups'));
+        return view('settings.security.2fa.setup', ['user' => $user, 'qrcode' => $qrcode, 'backups' => $backups]);
     }
 
-    protected function generateBackupCodes()
+    /**
+     * @return mixed[]
+     */
+    protected function generateBackupCodes(): array
     {
         $keys = [];
         for ($i = 0; $i < 11; $i++) {
@@ -88,13 +89,13 @@ trait SecuritySettings
         $verify = $google2fa->verifyKey($user->{'2fa_secret'}, $code);
         if ($verify) {
             $user->{'2fa_enabled'} = true;
-            $user->{'2fa_setup_at'} = Carbon::now();
+            $user->{'2fa_setup_at'} = now();
             $user->save();
 
             return response()->json(['msg' => 'success']);
-        } else {
-            return response()->json(['msg' => 'fail'], 403);
         }
+
+        return response()->json(['msg' => 'fail'], 403);
     }
 
     public function securityTwoFactorEdit(Request $request)
@@ -105,7 +106,7 @@ trait SecuritySettings
             abort(403);
         }
 
-        return view('settings.security.2fa.edit', compact('user'));
+        return view('settings.security.2fa.edit', ['user' => $user]);
     }
 
     public function securityTwoFactorRecoveryCodes(Request $request)
@@ -117,7 +118,7 @@ trait SecuritySettings
         }
         $codes = json_decode($user->{'2fa_backup_codes'}, true);
 
-        return view('settings.security.2fa.recovery-codes', compact('user', 'codes'));
+        return view('settings.security.2fa.recovery-codes', ['user' => $user, 'codes' => $codes]);
     }
 
     public function securityTwoFactorRecoveryCodesRegenerate(Request $request)

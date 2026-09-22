@@ -13,7 +13,7 @@ class StoryIndexService
 {
     public const STORY_TTL = 86400;
 
-    private const REBUILD_LOCK_TTL = 300;
+    private const int REBUILD_LOCK_TTL = 300;
 
     private function authorKey($authorId)
     {
@@ -175,11 +175,25 @@ class StoryIndexService
         $type = $story->type;
         $path = $story->path;
 
+        // The author key must live as long as the LONGEST-lived active story,
+        // not whichever story is indexed last. rebuildIndex() reindexes an
+        // author's stories newest-first, so the oldest (shortest-lived) story
+        // is indexed last; a plain expire() would shorten the key's TTL and
+        // drop the author from the index while newer stories are still live.
+        // Read the current TTL up front (outside the pipeline) and only ever
+        // extend, mirroring markSeen().
+        $authorKeyTtl = (int) ($ttl + 3600);
+        $currentAuthorTtl = $this->redisInt(fn () => Redis::ttl($this->authorKey($author)));
+        if ($currentAuthorTtl > $authorKeyTtl) {
+            $authorKeyTtl = $currentAuthorTtl;
+        }
+
         Redis::pipeline(function ($pipe) use (
             $author,
             $sid,
             $score,
             $ttl,
+            $authorKeyTtl,
             $duration,
             $overlays,
             $viewCount,
@@ -206,7 +220,7 @@ class StoryIndexService
                 $pipe->zadd($keyAuth, $score, $sid);
             }
             $pipe->sadd('story:active_authors', $author);
-            $pipe->expire($keyAuth, (int) ($ttl + 3600));
+            $pipe->expire($keyAuth, $authorKeyTtl);
         });
     }
 
@@ -457,7 +471,7 @@ class StoryIndexService
                         }
                     }
                 } else {
-                    $authorIds = array_filter($active, fn ($aid) => $this->redisBool(fn () => Redis::sismember("following:{$pid}", $aid)));
+                    $authorIds = array_filter($active, fn ($aid): bool => $this->redisBool(fn () => Redis::sismember("following:{$pid}", $aid)));
                 }
             }
         } else {
@@ -560,7 +574,7 @@ class StoryIndexService
                 'is_author' => $isAuthor,
                 'stories' => collect($storyItems)->sortBy('id')->values()->all(),
                 'url' => $url,
-                'hasViewed' => collect($storyItems)->every(fn ($s) => $s['viewed'] === true),
+                'hasViewed' => collect($storyItems)->every(fn ($s): bool => $s['viewed'] === true),
                 '_latest_ts' => $authorLatestTs[$aid] ?? 0,
             ];
         }
@@ -591,7 +605,7 @@ class StoryIndexService
         $following = DB::table('followers')
             ->where('profile_id', $viewerId)
             ->pluck('following_id')
-            ->map(fn ($id) => (string) $id)
+            ->map(fn ($id): string => (string) $id)
             ->toArray();
 
         $authorIds = array_merge([(string) $viewerId], $following);
@@ -686,7 +700,7 @@ class StoryIndexService
             ->orderBy('id')
             ->chunk(1000, function ($followers) use ($followingKey, &$hasResults) {
                 $hasResults = true;
-                $ids = $followers->map(fn ($f) => (string) $f->following_id)->all();
+                $ids = $followers->map(fn ($f): string => (string) $f->following_id)->all();
                 if (! empty($ids)) {
                     Redis::sadd($followingKey, ...$ids);
                 }

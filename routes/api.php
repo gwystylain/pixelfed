@@ -13,6 +13,7 @@ use App\Http\Controllers\AppRegisterController;
 use App\Http\Controllers\CollectionController;
 use App\Http\Controllers\ComposeController;
 use App\Http\Controllers\CustomFilterController;
+use App\Http\Controllers\DirectConversationController;
 use App\Http\Controllers\DirectMessageController;
 use App\Http\Controllers\DiscoverController;
 use App\Http\Controllers\FederationController;
@@ -44,6 +45,7 @@ $middleware = ['auth:sanctum,api'];
 
 Route::post('/f/inbox', [FederationController::class, 'sharedInbox']);
 Route::post('/users/{username}/inbox', [FederationController::class, 'userInbox']);
+Route::get('/users/{username}/followers_synchronization', [FederationController::class, 'userFollowersSynchronization']);
 Route::get('i/actor', [InstanceActorController::class, 'profile']);
 Route::post('i/actor/inbox', [InstanceActorController::class, 'inbox']);
 Route::get('i/actor/outbox', [InstanceActorController::class, 'outbox']);
@@ -159,6 +161,8 @@ Route::prefix('api')->group(function () use ($middleware) {
         Route::post('avatar/update', [ApiController::class, 'avatarUpdate'])->middleware($middleware);
         Route::get('blocks', [ApiV1Controller::class, 'accountBlocks'])->middleware($middleware);
         Route::get('conversations', [ApiV1Controller::class, 'conversations'])->middleware($middleware);
+        Route::delete('conversations/{id}', [ApiV1Controller::class, 'conversationDelete'])->middleware($middleware);
+        Route::post('conversations/{id}/read', [ApiV1Controller::class, 'conversationRead'])->middleware($middleware);
         Route::get('custom_emojis', [ApiV1Controller::class, 'customEmojis']);
         Route::get('domain_blocks', [DomainBlockController::class, 'index'])->middleware($middleware);
         Route::post('domain_blocks', [DomainBlockController::class, 'store'])->middleware($middleware);
@@ -211,6 +215,7 @@ Route::prefix('api')->group(function () use ($middleware) {
         Route::get('tags/{id}', [TagsController::class, 'getHashtag'])->middleware($middleware);
 
         Route::get('statuses/{id}/history', [StatusEditController::class, 'history'])->middleware($middleware);
+        Route::put('statuses/{id}/interaction_policy', [StatusEditController::class, 'interactionPolicy'])->middleware($middleware);
         Route::put('statuses/{id}', [StatusEditController::class, 'store'])->middleware($middleware);
 
         Route::prefix('admin')->group(function () use ($middleware) {
@@ -247,6 +252,7 @@ Route::prefix('api')->group(function () use ($middleware) {
             Route::get('two-factor', [ApiV1Dot1Controller::class, 'accountTwoFactor'])->middleware($middleware);
             Route::get('emails-from-pixelfed', [ApiV1Dot1Controller::class, 'accountEmailsFromPixelfed'])->middleware($middleware);
             Route::get('apps-and-applications', [ApiV1Dot1Controller::class, 'accountApps'])->middleware($middleware);
+            Route::post('apps-and-applications/{id}/revoke', [ApiV1Dot1Controller::class, 'accountAppRevoke'])->middleware($middleware);
             Route::get('mutuals/{id}', [ApiV1Dot1Controller::class, 'getMutualAccounts'])->middleware($middleware);
             Route::get('username/{username}', [ApiV1Dot1Controller::class, 'accountUsernameToId'])->middleware($middleware);
         });
@@ -272,6 +278,21 @@ Route::prefix('api')->group(function () use ($middleware) {
             Route::post('thread/read', [DirectMessageController::class, 'read'])->middleware($middleware);
             Route::post('lookup', [DirectMessageController::class, 'composeLookup'])->middleware($middleware);
             Route::get('compose/mutuals', [DirectMessageController::class, 'composeMutuals'])->middleware($middleware);
+
+            Route::get('unread_count', [DirectConversationController::class, 'unreadCount'])->middleware($middleware);
+            Route::get('conversations', [DirectConversationController::class, 'index'])->middleware($middleware);
+            Route::post('conversations', [DirectConversationController::class, 'store'])->middleware($middleware);
+            Route::get('conversations/{id}', [DirectConversationController::class, 'show'])->middleware($middleware);
+            Route::get('conversations/{id}/messages', [DirectConversationController::class, 'messages'])->middleware($middleware);
+            Route::post('conversations/{id}/messages', [DirectConversationController::class, 'send'])->middleware($middleware);
+            Route::delete('conversations/{id}/messages/{messageId}', [DirectConversationController::class, 'deleteMessage'])->middleware($middleware);
+            Route::post('conversations/{id}/read', [DirectConversationController::class, 'read'])->middleware($middleware);
+            Route::post('conversations/{id}/accept', [DirectConversationController::class, 'accept'])->middleware($middleware);
+            Route::post('conversations/{id}/mute', [DirectConversationController::class, 'mute'])->middleware($middleware);
+            Route::post('conversations/{id}/unmute', [DirectConversationController::class, 'unmute'])->middleware($middleware);
+            Route::post('conversations/{id}/hide', [DirectConversationController::class, 'hide'])->middleware($middleware);
+            Route::post('conversations/{id}/unhide', [DirectConversationController::class, 'unhide'])->middleware($middleware);
+            Route::post('conversations/{id}/leave', [DirectConversationController::class, 'leave'])->middleware($middleware);
         });
 
         Route::prefix('archive')->group(function () use ($middleware) {
@@ -381,6 +402,11 @@ Route::prefix('api')->group(function () use ($middleware) {
         Route::post('instances/moderate', [AdminApiController::class, 'moderateInstance'])->middleware($middleware);
         Route::post('instances/refresh-stats', [AdminApiController::class, 'refreshInstanceStats'])->middleware($middleware);
         Route::get('instance/stats', [AdminApiController::class, 'getAllStats'])->middleware($middleware);
+        Route::get('posts/list', [AdminApiController::class, 'getPosts'])->middleware($middleware);
+        Route::get('posts/get', [AdminApiController::class, 'getPost'])->middleware($middleware);
+        Route::get('profiles/list', [AdminApiController::class, 'getProfiles'])->middleware($middleware);
+        Route::get('profiles/get', [AdminApiController::class, 'getProfile'])->middleware($middleware);
+        Route::post('profiles/moderate', [AdminApiController::class, 'moderateProfile'])->middleware($middleware);
     });
 
     Route::prefix('landing/v1')->group(function () {

@@ -38,7 +38,7 @@ class UserStorageService
         return $updatedAt->lt(now()->subHours(self::STALE_AFTER_HOURS));
     }
 
-    public static function get($id)
+    public static function get($id): int
     {
         $user = User::find($id);
         if (! $user || $user->status) {
@@ -58,7 +58,7 @@ class UserStorageService
         return (int) $user->storage_used;
     }
 
-    public static function calculateStorageUsed($id)
+    public static function calculateStorageUsed($id): int
     {
         return (int) floor(Media::whereUserId($id)->sum('size') / 1000);
     }
@@ -67,7 +67,7 @@ class UserStorageService
     {
         $user = User::find($id);
         if (! $user || $user->status) {
-            return;
+            return null;
         }
         $updatedVal = (int) floor(Media::whereUserId($id)->sum('size') / 1000);
         $user->storage_used = $updatedVal;
@@ -107,7 +107,7 @@ class UserStorageService
             return self::recalculateUpdateStorageUsed($id);
         }
 
-        $sizeInKbs = (int) floor(((int) $sizeInBytes) / 1000);
+        $sizeInKbs = (int) ceil(((int) $sizeInBytes) / 1000);
         $updatedVal = max(0, (int) $user->storage_used + $sizeInKbs);
 
         $user->storage_used = $updatedVal;
@@ -147,7 +147,7 @@ class UserStorageService
             return self::recalculateUpdateStorageUsed($id);
         }
 
-        $sizeInKbs = (int) floor(((int) $sizeInBytes) / 1000);
+        $sizeInKbs = (int) ceil(((int) $sizeInBytes) / 1000);
         $updatedVal = max(0, (int) $user->storage_used - $sizeInKbs);
 
         $user->storage_used = $updatedVal;
