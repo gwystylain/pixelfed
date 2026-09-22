@@ -162,11 +162,12 @@ until the new one has been running for a while; it is the rollback.
 **Since v0.14.x the build compiles ffmpeg from source.** Upstream made the
 Dockerfile multi-stage: the first stage fetches the ffmpeg source
 (`ARG FFMPEG_VERSION`, 9.0.1 at the time of writing) and builds it, and the
-runtime stage copies `ffmpeg`, `ffprobe` and its libraries in. Expect the
-image build to take far longer than the few minutes it used to — budget
-tens of minutes on this box, and do not start it inside the downtime
-window. The runtime contract is unchanged: same `serversideup/php` base,
-same `/var/www/html`, same uid/gid 33.
+runtime stage copies `ffmpeg`, `ffprobe` and its libraries in. Measured on
+this box for v0.14.3-fork.1: **4m31s cold**, not the tens of minutes the
+extra stage suggests. Still do it before the downtime window, not inside
+it. The runtime contract is unchanged: same `serversideup/php` base, same
+`/var/www/html`, same uid/gid 33. The image also got *smaller*, 1.91GB to
+1.37GB.
 
 ## `.env`
 

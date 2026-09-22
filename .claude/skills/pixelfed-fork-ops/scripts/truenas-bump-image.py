@@ -110,13 +110,24 @@ def main():
         print("no changes; not applying.")
         return
 
-    payload = json.dumps({"custom_compose_config_string": open(out).read()})
-    r = run(["midclt", "call", "-j", "app.update", APP, payload])
-    status = [l for l in (r.stdout + r.stderr).replace("\r", "\n").splitlines() if l.startswith("Status:")]
-    for l in status[-3:]:
-        print("  " + l)
-    if r.returncode != 0:
-        die("app.update failed (exit %d)" % r.returncode)
+    # Through the middleware socket, not `midclt call app.update <name> <json>`.
+    # That puts the whole compose file in argv, and at the size this config
+    # reached during the v0.14.3 deploy it tripped sudo's argv integrity check
+    # ("argv[5] mismatch"), exit -9, nothing applied — and sudo echoed the
+    # payload, database passwords included, into the terminal. The client
+    # keeps it off the command line entirely.
+    from truenas_api_client import Client
+
+    try:
+        with Client() as client:
+            client.call(
+                "app.update",
+                APP,
+                {"custom_compose_config_string": open(out).read()},
+                job=True,
+            )
+    except Exception as e:
+        die("app.update failed: %s" % e)
 
     q = run(["midclt", "call", "app.query", json.dumps([["name", "=", APP]])])
     state = json.loads(q.stdout)[0]["state"] if q.returncode == 0 else "?"

@@ -90,6 +90,18 @@ config):
 - Wait-for-job flag is `-j`. `-job` is parsed as `-j` plus junk and the call
   **silently does nothing** - always confirm with
   `midclt call app.query '[["name","=","pixelfed"]]'` after a call.
+- **Never pass the compose config to `midclt` as an argument.** At the size
+  the config reached for v0.14.3, `midclt call app.update pixelfed '<json>'`
+  tripped sudo's argv integrity check - `argv[5] mismatch`, exit -9, nothing
+  applied - and sudo echoed the whole payload, database passwords included,
+  to the terminal. Use the middleware socket instead, which is what
+  `truenas-bump-image.py` now does:
+
+  ```python
+  from truenas_api_client import Client
+  with Client() as c:
+      c.call('app.update', 'pixelfed', {'custom_compose_config_string': text}, job=True)
+  ```
 - `app.update` on a stopped app leaves it stopped; `app.start` is separate.
 - Pass JSON payloads by building them in Python and calling `midclt` via
   `subprocess` - shell quoting mangles the YAML inside.
