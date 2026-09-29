@@ -94,7 +94,12 @@ echo "== workers"
 hz=$(sudo docker exec "$worker" php artisan horizon:status 2>/dev/null | tr -d '\n' | sed 's/\x1b\[[0-9;]*m//g' | xargs || true)
 case "$hz" in *running*) pass "horizon: $hz";; *) failx "horizon: ${hz:-no output}";; esac
 last_sched=$(sudo docker logs --tail 200 "$sched" 2>&1 | grep -E "Running \[" | tail -1 | sed 's/^\s*//')
-[ -n "$last_sched" ] && pass "scheduler last ran: ${last_sched:0:70}" || warn "scheduler has not logged a run yet"
+# Right after a restart nothing may be due yet; schedule:work still logs
+# "No scheduled commands are ready to run" each minute, which proves it ticks.
+ticking=$(sudo docker logs --tail 20 "$sched" 2>&1 | grep -c "No scheduled commands are ready" || true)
+if [ -n "$last_sched" ]; then pass "scheduler last ran: ${last_sched:0:70}"
+elif [ "${ticking:-0}" -gt 0 ]; then pass "scheduler ticking (nothing due yet since restart)"
+else warn "scheduler has not logged a run yet"; fi
 
 echo "== http (host port 8095, unauthenticated)"
 domain=$(sudo grep -oE '^APP_DOMAIN=.*' "$envfile" | cut -d= -f2- | tr -d '"'"'"' ')
