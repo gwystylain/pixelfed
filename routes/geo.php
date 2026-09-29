@@ -32,6 +32,7 @@ Route::domain(config('pixelfed.domain.app'))
             Route::put('compose/media/{id}', [GeoLocationController::class, 'updateMedia']);
 
             // Correcting a pin the camera got wrong. Author only.
+            Route::get('status/{id}/location', [GeoLocationController::class, 'showStatusLocation']);
             Route::put('status/{id}/location', [GeoLocationController::class, 'updateStatusLocation']);
             Route::delete('status/{id}/location', [GeoLocationController::class, 'resetStatusLocation']);
         });

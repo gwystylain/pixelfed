@@ -46,8 +46,10 @@ handful of upstream files it does touch are listed exhaustively below.
 5. **Filters by date.** A two-handled slider in the bar, spanning the oldest
    post on the map to today, with presets for the last 30 days, 6 months and
    year.
-6. **Lets an author move their own pin.** Cameras get a fix wrong. The author
-   of a post can drag its pin, search for an address, or paste coordinates.
+6. **Lets an author correct their own post's location.** Cameras get a fix
+   wrong. The author can drag the pin, click the map to drop it, search for an
+   address, or paste coordinates. That works on the map, and from **Edit Post →
+   Other** anywhere the post is shown, where the location tag follows the pin.
 
 ## Design decisions
 
@@ -421,7 +423,53 @@ is.
 
 The marker is added straight to the map rather than to the `markers` layer
 group, so a viewport refetch — which clears and rebuilds every pin — leaves
-the one being placed alone.
+the one being placed alone. While it is out, a click on the map drops it there.
+
+### From the post editor
+
+The map is not where people go to fix a post. Upstream's **Edit Post** modal
+already had a Location field, but only a city search. With the feature on,
+its Location tab (under **Other**) is `GeoLocationPicker` instead: an address
+box, a small map to click or drag the pin on, and a location-tag dropdown of
+the cities nearest the pin. It is the same modal in the feed, on the
+permalink and in the map's post pane, so it works in all three.
+
+- **The tag follows the pin.** Moving the pin re-selects the nearest city
+  within `geo.autotag.max_distance_km` — the rule the server uses when it
+  tags a post itself — or "No location tag" if there is none. The author can
+  pick another from the dropdown. This closes half of the old "moving a pin
+  does not move the place" limitation. Here the author *is* editing the post,
+  so a changed `place_id` federating as an edit is what they asked for.
+- **Nothing is saved until Save.** The picker only emits. The modal writes the
+  pin through `PUT /status/{id}/location` and the tag through upstream's own
+  status update. Cancel is a real cancel.
+- **A pin move alone is not an edit.** If nothing else in the modal changed,
+  only the pin endpoint is called. It saves quietly, so it neither marks the
+  post edited, federates, nor uses one of upstream's ten edits.
+- **Order does not matter.** The pin is written first. A changed `place_id`
+  then forces a re-derive, which the `manual` guard ignores. If the queue is
+  synchronous the re-derive runs inside the status update instead, and the
+  pin write has already landed. Either way the hand-placed pin wins.
+- **"No tag" is sent as `{}`, not `null`.** Upstream's `UpdateStatusService`
+  tests `isset($attributes['location'])`, which `null` fails, so upstream's
+  own trash button never actually clears a place. An object with no `id`
+  does. `locationFieldFor()` in `js/geo/edit-location.js` handles it, and
+  passes the original value back when nothing changed so the modal does not
+  see a change that is not one.
+- **Remove location** takes the post off the map and discards the photos'
+  coordinates, as the composer's "Don't add" does, then clears the tag. It is
+  `DELETE /status/{id}/location?mode=none`.
+- **It survives the tabs.** The modal `v-if`s its tabs, so the picker is
+  rebuilt each time Location is opened. It restores from the modal's
+  `fields.location` and pending pin rather than from the server.
+- **Tile config comes with the position.** The SPA has no `_geoConfig`, so
+  `GET /status/{id}/location` carries the tile URL and zoom bounds. Leaflet
+  itself is already in `vendor.js`. Its CSS is imported by the picker, lands
+  in `vendor.js` as a module (+16 KB), and is only injected when the
+  `geo-picker` chunk loads.
+- **A post that cannot be on the map** — a text post, a reply — gets the
+  address box and the tag dropdown, but no map. Picking an address just
+  chooses the nearest city.
 
 ---
 
@@ -437,10 +485,12 @@ database/migrations/2026_09_09_1000*.php         three additive migrations
 resources/assets/components/geo/GeoFeed.vue      the map and the split view
 resources/assets/components/geo/GeoPostPane.vue  a post beside the map
 resources/assets/components/geo/GeoLocationEditor.vue  moving a pin
+resources/assets/components/geo/GeoLocationPicker.vue  Edit Post's Location tab
 resources/assets/components/geo/GeoSuggest.vue   composer suggestion card
 resources/assets/js/geo.js                       bundle entry point
 resources/assets/js/geo/spa-bridge.js            store + $router for the pane
 resources/assets/js/geo/post-presenters.js       global media registrations
+resources/assets/js/geo/edit-location.js         what PostEditModal calls to save
 resources/assets/sass/geo.scss                   map styles + Leaflet CSS
 resources/views/geo/index.blade.php              the map page
 tests/Unit/Geo/**                                Coordinates, ExifGpsReader,
@@ -451,10 +501,12 @@ docs/fork/GEO_FEED.md                            this file
 ### Upstream files touched — check each one after a rebase
 
 Every insertion is marked with a `pf-geo:` comment, so
-`git grep -n 'pf-geo:'` lists them all — 12 hits across 7 files. The eighth,
+`git grep -n 'pf-geo:'` lists them all — 20 hits across 8 upstream files,
+plus the fork's own files and docs, which carry the marker too. The ninth,
 `package.json`, is JSON and cannot carry a comment, so check it by hand.
 
-Eight files, ~50 inserted lines, nothing removed or rewritten.
+Nine files, ~100 inserted lines, one upstream line extended
+(`PostEditModal`'s `canSave` watcher), nothing removed.
 
 The split view added none of them. It renders six upstream components and
 loads `spa.css`, but it *imports* and *links* them from fork-owned files — the
@@ -469,6 +521,7 @@ count above is the same as it was before the pane existed.
 | `resources/views/layouts/partial/nav.blade.php` | Adds a nav item. | Link disappears; `/discover/map` still works. |
 | `resources/assets/components/partials/sidebar.vue` | Adds a nav item and `hasPhotoMap`. | As above. |
 | `resources/assets/js/components/ComposeModal.vue` | Three insertions: import, `components` entry, one `<geo-suggest>` tag. | Composer stops suggesting locations. Posts still get one assigned server-side on publish, so this degrades rather than breaks. |
+| `resources/assets/components/partials/post/PostEditModal.vue` | Eight markers: `<geo-location-picker>` with upstream's location search wrapped in `v-else`, import, async `components` entry, two data fields, `\|\| geoPending` on the `canSave` watcher, a reset line, a call in `handleSave`, two methods. | Edit Post falls back to upstream's city search. Pins can still be moved on the map. |
 | `.env.example` | Commented documentation block. | Cosmetic. |
 
 Note the shape of that table: the only entry that stops the feature working is
@@ -491,7 +544,7 @@ git tag --sort=-v:refname | grep -v -- -fork | head -1   # newest upstream relea
 git merge vX.Y.Z
 ```
 
-Conflicts, if any, will be in the eight files above — they are all small
+Conflicts, if any, will be in the nine files above — they are all small
 insertions, so take upstream's version of the surrounding code and re-apply
 the `pf-geo:` block.
 
@@ -542,8 +595,8 @@ grep -oE "middleware\(\[[^]]+\]" routes/geo.php
 Then verify:
 
 ```bash
-# 1. Insertion points still present (expect 12 hits across 7 files)
-git grep -n 'pf-geo:'
+# 1. Insertion points still present (expect 20 hits across 8 upstream files)
+git grep -n 'pf-geo:' -- ':!app/Geo' ':!docs' ':!.claude'
 
 # 1b. Everything the post pane imports from upstream still exists, and
 #     `$store`/`$router` are still all it reaches for
@@ -595,6 +648,8 @@ consequence if the assumption breaks:
 | The only components the pane's tree resolves globally are the five in `post-presenters.js` | `post-presenters.js` | A new global tag renders as nothing — no error, just missing UI. The scan in the rebase procedure finds these. |
 | `/api/pixelfed/v1/statuses/{id}` and `/api/v2/statuses/{id}/state` answer a session | `GeoPostPane.vue` | Pane shows "Cannot show this post" for everything. |
 | `StatusGeoObserver` is the only thing that forces a re-derive | `SOURCE_MANUAL` guard in `resolve()` | A new forced path that skips the guard would silently undo hand placed pins. |
+| `UpdateStatusService` clears `place_id` for a `location` with no `id`, and ignores `null` | `locationFieldFor()` in `js/geo/edit-location.js` | If upstream fixes `null`, nothing breaks. If it stops accepting `{}`, "No location tag" stops clearing the tag. |
+| `PostEditModal` keeps `fields.location`, `originalFields` as a JSON string, and a `canSave` watcher | `PostEditModal.vue` insertions | Save stays disabled after a pin-only change, or a pin-only change is saved as a full edit. |
 | Vue 2 exposes the component on `$el.__vue__` | nothing at runtime — only the headless harness used to test this | Layout regressions stop being catchable without a browser. |
 
 If a new upload path appears upstream that does **not** go through the `Media`
@@ -840,6 +895,23 @@ anything else goes to the configured geocoder.
 }
 ```
 
+### `GET /status/{id}/location`
+
+The post's current pin, for the post editor. **Author only**, 404 otherwise.
+
+```json
+{
+  "status_id": "...", "lat": 51.5, "lng": -0.12, "precision": "exact", "source": "manual",
+  "mappable": true,
+  "photo": { "lat": 51.49, "lng": -0.11 },
+  "autotag_max_km": 50,
+  "map": { "tile_url": "...", "tile_attribution": "...", "min_zoom": 2, "max_zoom": 18 }
+}
+```
+
+`photo` is the first attachment's EXIF position, or null. It is what "Reset to
+photo" would return to.
+
 ### `PUT /status/{id}/location` — `{"lat": 51.5, "lng": -0.12}`
 
 Moves one post's pin. **Author only** — 404 for anyone else's post, because
@@ -847,10 +919,16 @@ the lookup is scoped to the caller's profile. Writes `geo_source = manual`,
 which makes the pin immune to re-derivation, and `geo_precision = exact`.
 Returns the new position.
 
-### `DELETE /status/{id}/location`
+### `DELETE /status/{id}/location?mode=photo|none`
 
-Drops a hand placed pin and re-derives from the photo, inline. Returns the
-position it landed on, which may be null if there is nothing to derive from.
+`photo` (the default) drops a hand placed pin and re-derives from the photo,
+inline. Returns the position it landed on, which may be null if there is
+nothing to derive from.
+
+`none` takes the post off the map. The attachments are marked `none` and
+their coordinates discarded, as `PUT /compose/media/{id}` does, so nothing
+can re-derive a pin later. The place tag is left alone. The post editor
+clears it in the same save.
 
 ### `GET /places/nearby?lat=&lng=&limit=`
 
@@ -923,6 +1001,22 @@ Not covered by automated tests, and worth checking by hand after a rebase:
   stops being offered.
 - Turn the geocoder off (`GEO_GEOCODER=places`) and check the box still finds
   towns, and that dragging and pasting are unaffected.
+- With the map's pin editor open, click somewhere on the map: the pin jumps
+  there and Apply lights up.
+- **Edit Post → Other**, on your own photo post, from the feed, the permalink
+  and the map pane:
+  - the map shows the current pin, and the tag dropdown the current place;
+  - search an address and pick it: the pin moves, the tag re-selects the
+    nearest city. Click the map, and drag the pin: same;
+  - Save with only the pin changed: "Location Updated", and the post is
+    *not* marked edited;
+  - change the tag and the caption too: one edit, the new tag shows on the
+    post, the pin stays where it was put;
+  - switch to Caption and back: the unsaved pin is still there;
+  - Remove location, Save: the tag is gone and the post is off the map;
+  - Cancel after moving the pin: nothing changes.
+- A text post: the Location tab has the box and dropdown but no map.
+- `GEO_ENABLED=false`: Edit Post shows upstream's city search.
 
 `ReverseGeocoder` and `GeoFeedService` are database-bound and untested; the
 repository has no fixtures for a seeded `places` table.
@@ -958,10 +1052,11 @@ repository has no fixtures for a seeded `places` table.
   entry only that viewer will ever read, for `geo.feed.cache_ttl` seconds.
 - **The date filter resets on reload.** See [The date filter](#the-date-filter)
   for why that is a choice rather than an omission.
-- **Editing a pin does not move the post's place.** The map position and the
-  `place` shown on the post are separate: correcting one leaves the other
-  saying whatever it said. Worth wiring together, but changing `place_id`
-  federates as an edit, which moving a pin deliberately does not.
+- **Moving a pin on the map does not move the post's place.** The map's own
+  editor leaves the `place` shown on the post saying whatever it said,
+  because changing `place_id` federates as an edit and moving a pin
+  deliberately does not. Edit Post does move both: see
+  [From the post editor](#from-the-post-editor).
 - **Nominatim is a shared service.** The usage policy is honoured — one
   request a second, identified, cached for a day — but a busy instance should
   run its own, and a lookup can fail or time out. Dragging and pasting never
@@ -976,4 +1071,7 @@ repository has no fixtures for a seeded `places` table.
   but the bytes are in the bundle every page loads. Only the post pane is a
   genuinely separate chunk, because it is app code rather than a package.
 - **Author edits to precision after publishing** re-derive the pin, but the
-  composer only offers that control before publishing.
+  composer only offers that control before publishing. Edit Post offers a
+  hand-placed pin, reset to photo, or removal, but not a city/exact switch.
+- **The post editor's location tab has no automated test.** Only the manual
+  list in [Testing](#testing) covers it.

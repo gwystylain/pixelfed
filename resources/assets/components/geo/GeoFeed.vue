@@ -128,6 +128,7 @@
 					@toggle-expand="paneExpanded = !paneExpanded"
 					@gone="dropPost(selectedId)"
 					@filtered="dropAccount"
+					@location-saved="onLocationSaved"
 					/>
 			</aside>
 		</div>
@@ -434,6 +435,18 @@
 				this.markers = L.layerGroup().addTo(this.map);
 
 				this.map.on('moveend zoomend', this.onMove);
+
+				// Dropping the pin: while a location is being edited, a click
+				// on the map puts the pin there, as dragging it would.
+				this.map.on('click', (e) => {
+					if (this.editing && this.editMarker) {
+						const at = e.latlng.wrap();
+
+						this.editing.lat = at.lat;
+						this.editing.lng = at.lng;
+						this.editMarker.setLatLng(at);
+					}
+				});
 
 				this.fetch();
 			},

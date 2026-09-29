@@ -38,7 +38,7 @@ PHPUnit `TestCase`):
 ```bash
 php vendor/bin/pest tests/Unit/Geo
 php vendor/bin/pint --test app/Geo routes/geo.php config/geo.php tests/Unit/Geo bootstrap/providers.php database/migrations/2026_09_09_100000_add_geo_columns_to_media_table.php database/migrations/2026_09_09_100100_add_geo_columns_to_statuses_table.php database/migrations/2026_09_09_100200_add_coordinate_index_to_places_table.php
-php artisan route:list --path=api/geo        # boots the app on framework defaults; 4 routes
+php artisan route:list --path=api/geo        # boots the app on framework defaults; 8 routes
 php artisan route:cache && php artisan view:cache && php artisan optimize:clear   # proves the entrypoint automation will succeed
 ```
 

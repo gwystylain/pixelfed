@@ -95,7 +95,7 @@ bash .claude/skills/pixelfed-fork-ops/scripts/truenas-verify.sh X.Y.Z-fork.N
 ```
 
 `ALL CHECKS PASSED` covers: app state, five containers healthy on the right
-image, no pending migrations, 4 + 1 geo routes, `geo.enabled`, Horizon
+image, no pending migrations, the named geo API routes + discover/map, `geo.enabled`, Horizon
 running, the scheduler having run, HTTP 302/200/200/401 on the map page, both
 assets and the API, OAuth keys and `.env` still on the datasets, no errors in
 the app log. Then hand over: the user opens the map and posts a photo with

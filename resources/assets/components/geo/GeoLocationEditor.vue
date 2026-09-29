@@ -16,7 +16,7 @@
 		</div>
 
 		<p class="geo-editor__hint">
-			Drag the pin on the map, or search for where it should be.
+			Click the map or drag the pin, or search for where it should be.
 		</p>
 
 		<form class="geo-editor__search" @submit.prevent="search">

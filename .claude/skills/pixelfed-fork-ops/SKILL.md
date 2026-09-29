@@ -92,7 +92,7 @@ Say a stage is done only when its proof exists:
 
 | Stage | Proof |
 |---|---|
-| Merge | `preflight.sh` shows the new base; GEO_FEED.md checklist run; `php vendor/bin/pest tests/Unit/Geo` green; `pint --test` on the geo paths clean; `php artisan route:list --path=api/geo` shows 4 routes; `route:cache`/`view:cache` succeed (then `optimize:clear`) |
+| Merge | `preflight.sh` shows the new base; GEO_FEED.md checklist run; `php vendor/bin/pest tests/Unit/Geo` green; `pint --test` on the geo paths clean; `php artisan route:list --path=api/geo` shows 8 routes; `route:cache`/`view:cache` succeed (then `optimize:clear`) |
 | Assets | `build-assets.sh` verification all `ok`; committed as "Update compiled assets" |
 | Tag | annotated `vX.Y.Z-fork.N` pushed with `dev`; `git tag --sort=-v:refname \| grep -- -fork \| head -1` shows it |
 | Deploy | `truenas-verify.sh <tag>` prints `ALL CHECKS PASSED`; the user has opened the map in a browser |

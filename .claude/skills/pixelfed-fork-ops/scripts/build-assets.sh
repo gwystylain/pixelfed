@@ -71,6 +71,9 @@ grep -q '"/js/geo.js"' public/mix-manifest.json;   check "manifest has /js/geo.j
 grep -q '"/css/geo.css"' public/mix-manifest.json; check "manifest has /css/geo.css" $?
 grep -lq 'geo-suggest' public/js/compose*.js;      check "compose bundle contains geo-suggest" $?
 grep -lq 'Photo Map' public/js/*.js;               check "some bundle contains the Photo Map link" $?
+# Only exists if PostEditModal's pf-geo import survived; lose it and Edit Post
+# silently falls back to upstream's city search.
+ls public/js/geo-picker.*.js >/dev/null 2>&1;      check "Edit Post geo-picker chunk built" $?
 [ ! -e public/hot ];                               check "no public/hot left behind" $?
 [ "$(find public/js public/css -name '*.map' | wc -l)" -eq 0 ]; check "no .map files produced" $?
 

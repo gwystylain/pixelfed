@@ -73,8 +73,8 @@ echo
 echo "== fork health:"
 markers=$(git grep -c 'pf-geo:' -- .env.example bootstrap/providers.php webpack.mix.js app/Util/Site/Config.php \
   resources/views/layouts/partial/nav.blade.php resources/assets/components/partials/sidebar.vue \
-  resources/assets/js/components/ComposeModal.vue 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')
-echo "  pf-geo markers in upstream files: $markers / 12 expected"
+  resources/assets/js/components/ComposeModal.vue resources/assets/components/partials/post/PostEditModal.vue 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')
+echo "  pf-geo markers in upstream files: $markers / 20 expected"
 echo "  compiled geo assets tracked:      $(git ls-files public/js/geo.js public/css/geo.css | wc -l | tr -d ' ')/2"
 echo "  leaflet in package.json:          $(grep -c '"leaflet"' package.json)"
 echo "  working tree changed files:       $(git status --porcelain | wc -l | tr -d ' ')"

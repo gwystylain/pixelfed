@@ -33,7 +33,7 @@ where they belong: the merge commit is "the state where both sides work".
 ## 3. Resolve textual conflicts
 
 They will be in the upstream files the feature edits (the inventory table in
-`docs/fork/GEO_FEED.md` lists all eight, each insertion marked `pf-geo:`).
+`docs/fork/GEO_FEED.md` lists all nine, each insertion marked `pf-geo:`).
 Take upstream's version of the surrounding code and re-apply the marked
 block. Two special cases:
 
@@ -65,7 +65,7 @@ Concretely:
 grep -rh '^use App' app/Geo routes/geo.php | sort -u          # every one must exist
 grep -oE "middleware\(\[[^]]+\]" routes/geo.php               # every alias must be in bootstrap/app.php
 grep -n "GeoServiceProvider" bootstrap/providers.php           # still registered
-git grep -c 'pf-geo:' -- <the 7 marked files>                  # 12 expected
+git grep -c 'pf-geo:' -- <the 8 marked files>                  # 20 expected
 ```
 
 Then prove it rather than reason about it (see `environment.md` for the PATH
@@ -75,7 +75,7 @@ prefix and Composer flags):
 composer install ...        # only if composer.lock changed
 php vendor/bin/pest tests/Unit/Geo
 php vendor/bin/pint --test <geo paths>
-php artisan route:list --path=api/geo       # 4 routes; this boots the whole app
+php artisan route:list --path=api/geo       # 8 routes; this boots the whole app
 php artisan route:cache && php artisan view:cache && php artisan optimize:clear
 ```
 

@@ -161,6 +161,10 @@
 
                 <template v-else-if="tabIndex === 3">
                     <p class="font-weight-bold small">Location</p>
+                    <!-- pf-geo: fork feature, see docs/fork/GEO_FEED.md -->
+                    <geo-location-picker v-if="geoEnabled" :status-id="status.id" :place="status.place"
+                        :selected="fields.location" :unsaved="geoPending" @change="onGeoChange" />
+                    <template v-else>
                     <autocomplete :search="locationSearch" placeholder="Search locations ..."
                         aria-label="Search locations ..." :get-result-value="getResultValue" @submit="onSubmitLocation">
                     </autocomplete>
@@ -174,6 +178,7 @@
                             <i class="far fa-trash"></i>
                         </button>
                     </div>
+                    </template>
                 </template>
             </b-card-body>
         </b-card>
@@ -199,10 +204,14 @@
 <script type="text/javascript">
 import Autocomplete from '@trevoreyre/autocomplete-vue';
 import BigPicture from 'bigpicture';
+// pf-geo: fork feature, see docs/fork/GEO_FEED.md
+import { applyGeoLocation, geoErrorMessage, locationFieldFor } from '../../../js/geo/edit-location.js';
 
 export default {
     components: {
         Autocomplete,
+        // pf-geo: fork feature, see docs/fork/GEO_FEED.md
+        'geo-location-picker': () => import(/* webpackChunkName: "geo-picker" */ '../../geo/GeoLocationPicker.vue'),
     },
 
     data() {
@@ -234,6 +243,9 @@ export default {
             },
             medias: undefined,
             altTextEditIndex: undefined,
+            // pf-geo: fork feature, see docs/fork/GEO_FEED.md
+            geoEnabled: !!(window.App.config.features && window.App.config.features.geo === true),
+            geoPending: null,
             tributeSettings: {
                 noMatchTemplate: function () { return null; },
                 collection: [
@@ -278,7 +290,8 @@ export default {
                 if (!this.canEdit) {
                     return;
                 }
-                this.canSave = this.originalFields !== JSON.stringify(this.fields);
+                this.canSave = this.originalFields !== JSON.stringify(this.fields)
+                    || !!this.geoPending; // pf-geo: fork feature, see docs/fork/GEO_FEED.md
             }
         }
     },
@@ -310,6 +323,7 @@ export default {
             this.medias = undefined;
             this.altTextEditIndex = undefined;
             this.isSubmitting = false;
+            this.geoPending = null; // pf-geo: fork feature, see docs/fork/GEO_FEED.md
         },
 
         async show(status) {
@@ -455,6 +469,11 @@ export default {
 
             await this.checkMediaUpdates();
 
+            // pf-geo: fork feature, see docs/fork/GEO_FEED.md
+            if (this.geoPending && !(await this.saveGeoLocation())) {
+                return;
+            }
+
             await axios.get('/sanctum/csrf-cookie')
             axios.put('/api/v1/statuses/' + this.status.id, {
                 status: this.fields.caption,
@@ -503,6 +522,37 @@ export default {
                     }
                     console.log(err);
                 })
+        },
+
+        // pf-geo: fork feature, see docs/fork/GEO_FEED.md
+        onGeoChange({ geo, place }) {
+            this.geoPending = geo;
+            this.fields.location = locationFieldFor(place, this.status.place);
+            this.canSave = this.originalFields !== JSON.stringify(this.fields) || !!this.geoPending;
+        },
+
+        // The picker's pin, saved on its own endpoint. Returns whether the
+        // ordinary edit should still go ahead: moving only the pin is not an
+        // edit to the post, and should not be saved or federated as one.
+        async saveGeoLocation() {
+            try {
+                const position = await applyGeoLocation(this.status.id, this.geoPending);
+                this.geoPending = null;
+                this.$emit('geo-update', position);
+            } catch (err) {
+                this.isSubmitting = false;
+                this.canSave = true;
+                swal('Error', geoErrorMessage(err), 'error');
+                return false;
+            }
+
+            if (this.originalFields === JSON.stringify(this.fields)) {
+                this.isOpen = false;
+                swal('Location Updated', 'You have successfully updated this post\'s location!', 'success');
+                return false;
+            }
+
+            return true;
         },
 
         async checkMediaUpdates() {

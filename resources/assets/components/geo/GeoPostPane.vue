@@ -144,6 +144,7 @@
 			v-if="isLoaded"
 			ref="editModal"
 			v-on:update="mergeUpdatedPost"
+			v-on:geo-update="$emit('location-saved', $event)"
 		/>
 	</div>
 </template>

@@ -17,7 +17,8 @@ use Illuminate\Http\Request;
 /**
  * Fork feature: geo feed. See docs/fork/GEO_FEED.md
  *
- * Location suggestion for the composer.
+ * Location suggestion for the composer, and correcting a post's location
+ * after it is published.
  *
  * The suggestion is advisory: it returns a place in exactly the shape the
  * existing composer already uses for `place`, so accepting it is a local
@@ -209,6 +210,48 @@ class GeoLocationController extends Controller
     }
 
     /**
+     * Where a post's pin is now, for the post editor's location picker.
+     *
+     * Author only, like the writes: an exact pin can be a home address, and
+     * the map deliberately never hands out more than the pin itself. Carries
+     * the tile config because the editor runs inside the SPA, which has no
+     * `_geoConfig` of its own.
+     */
+    public function showStatusLocation(Request $request, $id)
+    {
+        abort_unless(config('geo.enabled'), 404);
+        abort_if(! $request->user(), 403);
+        abort_if(! ctype_digit((string) $id), 404);
+
+        $status = Status::whereProfileId($request->user()->profile_id)
+            ->findOrFail((int) $id);
+
+        $photo = Media::whereStatusId($status->id)
+            ->whereNotNull('geo_lat')
+            ->orderBy('order')
+            ->orderBy('id')
+            ->first();
+
+        $hasPhoto = $photo && Coordinates::isValid($photo->geo_lat, $photo->geo_lng);
+
+        return response()->json($this->presentStatusLocation($status) + [
+            'mappable' => in_array($status->type, StatusGeoService::MAPPABLE_TYPES, true)
+                && ! $status->in_reply_to_id
+                && ! $status->reblog_of_id,
+            'photo' => $hasPhoto
+                ? ['lat' => (float) $photo->geo_lat, 'lng' => (float) $photo->geo_lng]
+                : null,
+            'autotag_max_km' => (float) config('geo.autotag.max_distance_km', 50),
+            'map' => [
+                'tile_url' => config('geo.map.tile_url'),
+                'tile_attribution' => config('geo.map.tile_attribution'),
+                'min_zoom' => (int) config('geo.map.min_zoom', 2),
+                'max_zoom' => (int) config('geo.map.max_zoom', 18),
+            ],
+        ]);
+    }
+
+    /**
      * Put a post's pin where its author says it belongs.
      *
      * The whole point is that the camera can be wrong, so this outranks
@@ -260,7 +303,12 @@ class GeoLocationController extends Controller
     }
 
     /**
-     * Drop a hand placed pin and go back to what the photo says.
+     * Drop a hand placed pin and go back to what the photo says — or, with
+     * `?mode=none`, take the post off the map altogether.
+     *
+     * `none` is the composer's "Don't add" applied after publishing, and does
+     * what that does: the photos' coordinates are discarded, not just hidden,
+     * so nothing can quietly put the pin back later.
      *
      * Run inline rather than queued so the answer in the response is the
      * position the map is about to show.
@@ -270,8 +318,24 @@ class GeoLocationController extends Controller
         abort_unless(config('geo.enabled'), 404);
         abort_if(! $request->user(), 403);
 
+        $this->validate($request, [
+            'mode' => 'nullable|string|in:photo,none',
+        ]);
+
         $status = Status::whereProfileId($request->user()->profile_id)
             ->findOrFail((int) $id);
+
+        if ($request->input('mode') === StatusGeoService::PRECISION_NONE) {
+            Media::whereStatusId($status->id)->update([
+                'geo_precision' => StatusGeoService::PRECISION_NONE,
+                'geo_lat' => null,
+                'geo_lng' => null,
+            ]);
+
+            $statusGeo->clear($status);
+
+            return response()->json($this->presentStatusLocation($status->refresh()));
+        }
 
         $statusGeo->clear($status);
         $statusGeo->resolve($status->refresh(), true);
