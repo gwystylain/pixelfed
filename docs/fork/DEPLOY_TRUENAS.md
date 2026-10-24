@@ -185,9 +185,11 @@ binding. Two smoke tests run during the build — `vips list` must show heif
 and jxl, and PHP must write an AVIF and a JXL through FFI — so a broken
 libvips fails the build rather than the first upload.
 
-**Scripts upstream's compose calls must exist in the image.** The base
-cached for v0.14.3 lacked `healthcheck-frankenphp`, which upstream's
-0.15.2 compose uses. `--pull` should bring it, but check before copying a
+**Scripts upstream's compose calls must exist in the image.** Upstream's
+0.15.2 compose tests the app with `healthcheck-frankenphp`, which is not in
+the image at all: not in the base cached for v0.14.3, and not in the
+freshly pulled `8.5-frankenphp` (v5.0.3, PHP 8.5.12) either. Copied as-is,
+that line leaves the app permanently unhealthy. Check before copying any
 `healthcheck:` line from upstream:
 `docker run --rm --entrypoint sh local/pixelfed:<tag> -c 'command -v <script>'`.
 
@@ -277,8 +279,8 @@ services:
       # 0.15.2: point the image's inherited healthcheck (a curl of
       # localhost:8080$HEALTHCHECK_PATH) at Laravel's /up, so "healthy"
       # means the app boots, not just that Caddy answers. Upstream does
-      # this with `test: healthcheck-frankenphp`, which this host's cached
-      # base image doesn't have - see "Building the image".
+      # this with `test: healthcheck-frankenphp`, a script the image
+      # doesn't have - see "Building the image".
       HEALTHCHECK_PATH: "/up"
 
       PHP_POST_MAX_SIZE: "500M"
@@ -492,8 +494,8 @@ image" on `--pull`).
   stored config was moved with a one-off script in the shape of
   `truenas-bump-image.py`, which only retags.
 - **Not copied:** upstream's `healthcheck-frankenphp` and
-  `healthcheck-horizon` tests. The first doesn't exist in older bases; the
-  second is `php artisan horizon:status`, which the deployed worker check
+  `healthcheck-horizon` tests. The first doesn't exist in the image, even
+  on a freshly pulled base; the second is `php artisan horizon:status`, which the deployed worker check
   already runs (and stricter: it greps for "running").
 - **Image:** libvips compiled from source, FFI binding instead of the PHP
   extension. Longer build.
