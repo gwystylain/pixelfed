@@ -69,6 +69,7 @@ return Application::configure(basePath: dirname(__DIR__))
         },
         channels: __DIR__.'/../routes/channels.php',
         commands: __DIR__.'/../routes/console.php',
+        health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->use([
@@ -214,7 +215,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 $isHttp = $e instanceof HttpExceptionInterface;
 
                 return response()->json(
-                    ['error' => $e->getMessage()],
+                    ['error' => $isHttp || config('app.debug') ? $e->getMessage() : 'Server Error'],
                     $isHttp ? $e->getStatusCode() : 500,
                     $isHttp ? $e->getHeaders() : [],
                 );

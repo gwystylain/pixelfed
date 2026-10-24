@@ -258,6 +258,21 @@ class StoryIndexService
         Redis::expire($key, $finalTtl);
     }
 
+    public function incrementViewCount(string|int $storyId, int $by = 1): void
+    {
+        $key = $this->storyKey($storyId);
+
+        if (! $this->redisBool(fn () => Redis::exists($key))) {
+            return;
+        }
+
+        Redis::hincrby($key, 'view_count', $by);
+
+        if (! $this->redisBool(fn () => Redis::hexists($key, 'id'))) {
+            Redis::del($key);
+        }
+    }
+
     /**
      * Keep the cached following set in sync when a follow is created.
      * Only touches the key if it already exists; otherwise the next carousel
@@ -309,9 +324,8 @@ class StoryIndexService
             DB::table('stories')
                 ->where('active', true)
                 ->where('expires_at', '>', now())
-                ->orderBy('profile_id')
-                ->orderBy('created_at', 'desc')
-                ->chunk(500, function ($stories) use (&$stats) {
+                ->orderBy('id')
+                ->chunkById(500, function ($stories) use (&$stats) {
                     foreach ($stories as $story) {
                         try {
                             $storyObj = (object) [
@@ -339,7 +353,7 @@ class StoryIndexService
                             }
                         }
                     }
-                });
+                }, 'id');
 
             $cutoffDate = now()->subHours(48);
 
@@ -349,6 +363,7 @@ class StoryIndexService
                 ->where('stories.active', true)
                 ->where('stories.expires_at', '>', now())
                 ->select(
+                    'story_views.id',
                     'story_views.profile_id as viewer_id',
                     'story_views.story_id',
                     'stories.profile_id as author_id',
@@ -356,7 +371,7 @@ class StoryIndexService
                     'story_views.created_at as view_created_at'
                 )
                 ->orderBy('story_views.id')
-                ->chunk(1000, function ($views) use (&$stats) {
+                ->chunkById(1000, function ($views) use (&$stats) {
                     foreach ($views as $view) {
                         try {
                             $this->markSeen(
@@ -377,7 +392,7 @@ class StoryIndexService
                             }
                         }
                     }
-                });
+                }, 'story_views.id', 'id');
 
             return [
                 'status' => 'success',
@@ -391,12 +406,27 @@ class StoryIndexService
 
     private function clearStoryCache(): void
     {
+        $lockKey = $this->rebuildLockKey();
+        $prefix = (string) config('database.redis.options.prefix');
+
         $storyKeys = $this->redisArray(fn () => Redis::keys('story:*'));
-        $storyKeys = array_filter($storyKeys, function ($key) {
-            return ! str_contains($key, 'following:');
+        $storyKeys = array_filter($storyKeys, function ($key) use ($lockKey) {
+            // Never delete follower carousels or the rebuild mutex itself, or we
+            // release the lock rebuildIndex() is holding.
+            return ! str_contains($key, 'following:')
+                && ! str_contains($key, $lockKey);
         });
 
         if (! empty($storyKeys)) {
+            // Redis::keys() returns prefixed key names, but Redis::del() re-adds
+            // the prefix. Strip it so del() targets the real keys instead of a
+            // double-prefixed no-op.
+            if ($prefix !== '') {
+                $storyKeys = array_map(function ($key) use ($prefix) {
+                    return str_starts_with($key, $prefix) ? substr($key, strlen($prefix)) : $key;
+                }, $storyKeys);
+            }
+
             $chunks = array_chunk($storyKeys, 1000);
             foreach ($chunks as $chunk) {
                 Redis::del(...$chunk);

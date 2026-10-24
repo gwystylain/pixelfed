@@ -55,7 +55,7 @@ class FeedInsertPipeline implements ShouldBeUniqueUntilProcessing, ShouldQueue
      */
     public function middleware(): array
     {
-        return [(new WithoutOverlapping("hts:feed:insert:sid:{$this->sid}"))->shared()->dontRelease()];
+        return [(new WithoutOverlapping("hts:feed:insert:sid:{$this->sid}"))->shared()->expireAfter($this->timeout)->dontRelease()];
     }
 
     /**
@@ -101,7 +101,14 @@ class FeedInsertPipeline implements ShouldBeUniqueUntilProcessing, ShouldQueue
             return;
         }
 
-        HomeTimelineService::add($this->pid, $this->sid);
+        if (HomeTimelineService::cacheKeyExists($this->pid)) {
+            HomeTimelineService::add($this->pid, $this->sid);
+        } else {
+            // Posting is the clearest possible contradiction of "this feed
+            // has nothing in it", but creating the key here would leave the
+            // author with a one-post timeline and no cold boot to fill it.
+            HomeTimelineService::clearEmptyWarmed($this->pid);
+        }
 
         $ids = FollowerService::localFollowerIds($this->pid);
 
@@ -116,8 +123,17 @@ class FeedInsertPipeline implements ShouldBeUniqueUntilProcessing, ShouldQueue
             $skipIds = UserDomainBlock::where('domain', $domain)->pluck('profile_id')->toArray();
         }
 
-        $filters = UserFilter::whereFilterableType(Profile::class)
-            ->whereFilterableId($status['account']['id'])
+        $filterableIds = [$status['account']['id']];
+
+        // For a reblog, also honor mutes/blocks against the ORIGINAL author,
+        // not just the sharer — otherwise a blocked account's post reappears
+        // in a viewer's feed when a followed account boosts it.
+        if (isset($status['reblog']['account']['id'])) {
+            $filterableIds[] = $status['reblog']['account']['id'];
+        }
+
+        $filters = UserFilter::whereIn('filterable_type', ['App\Profile', Profile::class])
+            ->whereIn('filterable_id', array_unique($filterableIds))
             ->whereIn('filter_type', ['mute', 'block'])
             ->pluck('user_id')
             ->toArray();
@@ -129,8 +145,14 @@ class FeedInsertPipeline implements ShouldBeUniqueUntilProcessing, ShouldQueue
         $skipIds = array_unique(array_values($skipIds));
 
         foreach ($ids as $id) {
-            if (! in_array($id, $skipIds)) {
+            if (in_array($id, $skipIds)) {
+                continue;
+            }
+
+            if (HomeTimelineService::cacheKeyExists($id)) {
                 HomeTimelineService::add($id, $this->sid);
+            } else {
+                HomeTimelineService::clearEmptyWarmed($id);
             }
         }
     }

@@ -5,11 +5,10 @@ namespace App\Util\ActivityPub\Inbox;
 use App\Jobs\StoryPipeline\StoryFetch;
 use App\Models\Status;
 use App\Models\Story;
-use App\Models\StoryView;
 use App\Services\DirectMessageService;
 use App\Services\FollowerService;
 use App\Services\SanitizeService;
-use App\Services\StoryIndexService;
+use App\Services\StoryViewService;
 use App\Util\ActivityPub\Helpers;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -82,18 +81,7 @@ trait HandlesStories
             return;
         }
 
-        $view = StoryView::firstOrCreate([
-            'story_id' => $story->id,
-            'profile_id' => $profile->id,
-        ]);
-
-        $index = app(StoryIndexService::class);
-        $index->markSeen($profile->id, $story->profile_id, $story->id, $story->created_at);
-
-        if ($view->wasRecentlyCreated == true) {
-            $story->view_count++;
-            $story->save();
-        }
+        app(StoryViewService::class)->record($story, (int) $profile->id);
     }
 
     public function handleStoryReactionActivity(): void
@@ -140,7 +128,12 @@ trait HandlesStories
             return;
         }
 
-        if (Status::whereObjectUrl($id)->exists()) {
+        // Dedup against the canonical (suffix-stripped) form that is actually
+        // stored, so a redelivered activity is recognized instead of racing the
+        // unique index on statuses.object_url / statuses.uri.
+        $url = $this->stripActivitySuffix($id);
+
+        if (Status::whereObjectUrl($url)->exists()) {
             return;
         }
 
@@ -153,7 +146,11 @@ trait HandlesStories
             return;
         }
 
-        if ($story->can_react == false) {
+        if ($statusType === 'story:reply') {
+            if ($story->can_reply == false) {
+                return;
+            }
+        } elseif ($story->can_react == false) {
             return;
         }
 
@@ -167,8 +164,6 @@ trait HandlesStories
             return;
         }
 
-        $url = $this->stripActivitySuffix($id);
-
         $entitiesKey = $statusType === 'story:reaction' ? 'reaction' : 'caption';
         $metaKey = $statusType === 'story:reaction' ? 'reaction' : 'caption';
 
@@ -179,6 +174,7 @@ trait HandlesStories
         $status->uri = $url;
         $status->object_url = $url;
         $status->caption = $text;
+        $status->rendered = '';
         $status->scope = 'direct';
         $status->visibility = 'direct';
         $status->in_reply_to_profile_id = $story->profile_id;

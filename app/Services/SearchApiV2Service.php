@@ -101,8 +101,11 @@ class SearchApiV2Service
         }
         $operator = db_is_pgsql() ? 'ilike' : 'like';
         $results = Profile::select('username', 'id', 'followers_count', 'domain')
-            ->where('username', $operator, $query)
-            ->orWhere('webfinger', $operator, $webfingerQuery)
+            ->whereNull('status')
+            ->where(function ($q) use ($operator, $query, $webfingerQuery) {
+                $q->where('username', $operator, $query)
+                    ->orWhere('webfinger', $operator, $webfingerQuery);
+            })
             ->orderByDesc('profiles.followers_count')
             ->offset($offset)
             ->limit($limit)
@@ -256,12 +259,10 @@ class SearchApiV2Service
                 if (in_array($domain, $banned)) {
                     return $default;
                 }
-                $paginated = collect($res)->take($limit)->skip($offset)->toArray();
-                if (! empty($paginated)) {
-                    $default['accounts'][] = $paginated;
-                } else {
-                    $default['accounts'] = [];
+                if ($offset > 0) {
+                    return $default;
                 }
+                $default['accounts'][] = $res;
 
                 return $default;
             }
@@ -279,12 +280,10 @@ class SearchApiV2Service
                 if (in_array($domain, $banned)) {
                     return $default;
                 }
-                $paginated = collect($res)->take($limit)->skip($offset)->toArray();
-                if (! empty($paginated)) {
-                    $default['accounts'][] = $paginated;
-                } else {
-                    $default['accounts'] = [];
+                if ($offset > 0) {
+                    return $default;
                 }
+                $default['accounts'][] = $res;
 
                 return $default;
             }

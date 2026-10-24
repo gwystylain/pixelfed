@@ -223,7 +223,7 @@ class ProfileController extends Controller
         $pid = request()->user()->profile->id;
         $blocks = UserFilter::whereUserId($profile->id)
             ->whereFilterType('block')
-            ->whereFilterableType(Profile::class)
+            ->whereIn('filterable_type', ['App\Profile', Profile::class])
             ->pluck('filterable_id')
             ->toArray();
         if (in_array($pid, $blocks)) {
@@ -380,7 +380,7 @@ class ProfileController extends Controller
     public function stories(Request $request, $username): ViewContract
     {
         abort_if(! (bool) config_cache('instance.stories.enabled') || ! $request->user(), 404);
-        $profile = Profile::whereNull('domain')->whereUsername($username)->firstOrFail();
+        $profile = Profile::whereNull(['domain', 'status'])->whereUsername($username)->firstOrFail();
         $pid = $profile->id;
         $authed = $request->user()->profile_id;
         abort_if($pid != $authed && ! FollowerService::follows($authed, $pid), 404);

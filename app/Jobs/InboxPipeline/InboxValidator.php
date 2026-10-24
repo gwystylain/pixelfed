@@ -2,8 +2,10 @@
 
 namespace App\Jobs\InboxPipeline;
 
+use App\Jobs\InboxPipeline\Concerns\MatchesActorUrl;
 use App\Jobs\InboxPipeline\Concerns\RetriesWhenActorUnavailable;
 use App\Models\Profile;
+use App\Services\BlockSyncService;
 use App\Services\FollowersSyncService;
 use App\Util\ActivityPub\Helpers;
 use App\Util\ActivityPub\HttpSignature;
@@ -18,6 +20,7 @@ use Illuminate\Support\Lottery;
 class InboxValidator implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use MatchesActorUrl;
     use RetriesWhenActorUnavailable;
 
     protected $username;
@@ -83,6 +86,9 @@ class InboxValidator implements ShouldQueue
 
             // FEP-8fcf: compare the sender's followers digest with our copy
             FollowersSyncService::handleInboundHeaders($headers);
+
+            // FEP-070c: compare the sender's block digest with our copy
+            BlockSyncService::handleInboundHeaders($headers);
 
             if (isset($payload['type']) && in_array($payload['type'], ['Follow', 'Accept'])) {
                 ActivityHandler::dispatch($headers, $profile, $payload)->onQueue('follow');
@@ -168,11 +174,11 @@ class InboxValidator implements ShouldQueue
 
             return false;
         }
-        // Rebind: the profile resolved by keyId must belong to the keyId host.
-        // This rejects a poisoned or stale row whose remote_url host differs
-        // from the request's keyId host, so a planted key_id -> attacker key
-        // binding cannot authenticate.
-        if (parse_url($actor->remote_url, PHP_URL_HOST) !== $keyDomain) {
+        // The key owner MUST be the actor the activity claims to be from.
+        // A same-host check is not enough: every account on a multi-user
+        // instance shares $keyDomain, so one account could sign on behalf of
+        // another on the same host. An exact actor-URL match closes that gap.
+        if (! self::sameActorUrl($actor->remote_url, $claimedActor)) {
             return false;
         }
         $pkey = openssl_pkey_get_public($actor->public_key);

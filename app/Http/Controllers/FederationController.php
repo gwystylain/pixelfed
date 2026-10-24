@@ -12,6 +12,7 @@ use App\Models\QuoteAuthorization;
 use App\Models\Status;
 use App\Services\AccountService;
 use App\Services\ActivityPubSignedFetchService;
+use App\Services\BlockSyncService;
 use App\Services\FeaturedCollectionService;
 use App\Services\FollowersSyncService;
 use App\Services\InstanceService;
@@ -83,7 +84,8 @@ class FederationController extends Controller
                 ],
             ];
 
-            return response()->json($res, 200, [], JSON_UNESCAPED_SLASHES);
+            return response()->json($res, 200, [], JSON_UNESCAPED_SLASHES)
+                ->header('Access-Control-Allow-Origin', '*');
         }
 
         if (str_starts_with($resource, 'https://')) {
@@ -98,7 +100,8 @@ class FederationController extends Controller
                 }
                 $key = 'federation:webfinger:sha256:url-username:'.$username;
                 if ($cached = Cache::get($key)) {
-                    return response()->json($cached, 200, [], JSON_UNESCAPED_SLASHES);
+                    return response()->json($cached, 200, [], JSON_UNESCAPED_SLASHES)
+                        ->header('Access-Control-Allow-Origin', '*');
                 }
                 $profile = Profile::whereUsername($username)->first();
                 if (! $profile || $profile->status !== null || $profile->domain) {
@@ -116,7 +119,8 @@ class FederationController extends Controller
         $hash = hash('sha256', $resource);
         $key = 'federation:webfinger:sha256:'.$hash;
         if ($cached = Cache::get($key)) {
-            return response()->json($cached, 200, [], JSON_UNESCAPED_SLASHES);
+            return response()->json($cached, 200, [], JSON_UNESCAPED_SLASHES)
+                ->header('Access-Control-Allow-Origin', '*');
         }
         if (! str_contains($resource, $domain)) {
             return response('', 400);
@@ -212,6 +216,16 @@ class FederationController extends Controller
                 }
             }
 
+            if (
+                is_string($obj['object'] ?? null)
+                && $obj['object'] === ($obj['actor'] ?? null)
+                && Profile::whereRemoteUrl($obj['object'])->exists()
+            ) {
+                dispatch(new DeleteWorker($headers, $payload, $request->getPathInfo()))->onQueue('inbox');
+
+                return;
+            }
+
             return;
         }
 
@@ -281,6 +295,16 @@ class FederationController extends Controller
 
                     return;
                 }
+            }
+
+            if (
+                is_string($obj['object'] ?? null)
+                && $obj['object'] === ($obj['actor'] ?? null)
+                && Profile::whereRemoteUrl($obj['object'])->exists()
+            ) {
+                dispatch(new DeleteWorker($headers, $payload))->onQueue('inbox');
+
+                return;
             }
 
             return;
@@ -363,6 +387,56 @@ class FederationController extends Controller
             ->json($res, 200, [], JSON_UNESCAPED_SLASHES)
             ->header('Content-Type', 'application/activity+json')
             ->header('Cache-Control', 'private, no-store');
+    }
+
+    public function blockSynchronization(Request $request): Response|JsonResponse
+    {
+        abort_if(! BlockSyncService::disclosing(), 404);
+        $signer = ActivityPubSignedFetchService::verify($request);
+        abort_if(! $signer, 401);
+        $authority = FollowersSyncService::authority($signer->remote_url);
+        abort_if(! $authority, 401);
+        abort_if(! BlockSyncService::isDisclosedPeer($authority), 403);
+
+        $pairs = BlockSyncService::disclosedPairs($authority);
+        $digest = BlockSyncService::digest($pairs);
+        $etag = '"'.$digest.'"';
+
+        $headers = [
+            'Cache-Control' => 'private, no-store',
+            'ETag' => $etag,
+        ];
+
+        $ifNoneMatch = array_map(
+            fn (string $tag) => preg_replace('#^W/#', '', trim($tag)),
+            explode(',', (string) $request->headers->get('If-None-Match', ''))
+        );
+
+        if (in_array($etag, $ifNoneMatch, true)) {
+            return response('', 304, $headers);
+        }
+
+        $res = [
+            '@context' => [
+                'https://www.w3.org/ns/activitystreams',
+                [
+                    'blockSynchronizationDigest' => BlockSyncService::DIGEST_CONTEXT_TERM,
+                ],
+            ],
+            'id' => BlockSyncService::endpointUrl(),
+            'type' => 'OrderedCollection',
+            'totalItems' => count($pairs),
+            'blockSynchronizationDigest' => $digest,
+            'orderedItems' => array_map(fn (array $pair) => [
+                'type' => 'Block',
+                'actor' => $pair['actor'],
+                'object' => $pair['object'],
+            ], $pairs),
+        ];
+
+        return response()
+            ->json($res, 200, $headers, JSON_UNESCAPED_SLASHES)
+            ->header('Content-Type', 'application/activity+json');
     }
 
     public function userFeatureAuthorization(Request $request, $username, $id): JsonResponse

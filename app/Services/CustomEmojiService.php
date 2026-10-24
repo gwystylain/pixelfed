@@ -61,6 +61,7 @@ class CustomEmojiService
             $res = Http::acceptJson()
                 ->withOptions([
                     'allow_redirects' => false,
+                    'protocols' => ['https'],
                     'curl' => [
                         CURLOPT_RESOLVE => [
                             $host.':'.((int) $port).':'.implode(',', array_map(
@@ -70,8 +71,6 @@ class CustomEmojiService
                         ],
                         CURLOPT_FRESH_CONNECT => true,
                         CURLOPT_FORBID_REUSE => true,
-                        CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
-                        CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
                     ],
                 ])
                 ->timeout(15)
@@ -107,19 +106,23 @@ class CustomEmojiService
                 return;
             }
 
-            $emoji = CustomEmoji::firstOrCreate([
+            // The (shortcode, domain) collision key is derived from the
+            // document's declared id, so its host must match the URL we
+            // actually fetched. Otherwise a peer could serve a document from
+            // its own host declaring a victim (shortcode, host) and hijack /
+            // clobber the victim's cached emoji. Host-only (not byte equality)
+            // so a legit id whose path differs from the fetch URL still passes.
+            if (strcasecmp((string) parse_url($json['id'], PHP_URL_HOST), (string) parse_url($url, PHP_URL_HOST)) !== 0) {
+                return;
+            }
+
+            $emoji = CustomEmoji::updateOrCreate([
                 'shortcode' => $json['name'],
                 'domain' => parse_url($json['id'], PHP_URL_HOST),
             ], [
                 'uri' => $json['id'],
                 'image_remote_url' => $json['icon']['url'],
             ]);
-
-            if ($emoji->wasRecentlyCreated == false) {
-                if (Storage::exists('public/'.$emoji->media_path)) {
-                    Storage::delete('public/'.$emoji->media_path);
-                }
-            }
 
             $ext = '.'.last(explode('/', $json['icon']['mediaType']));
             $mediaPath = 'emoji/'.$emoji->id.$ext;
@@ -131,13 +134,25 @@ class CustomEmojiService
                 $body = SecureMediaFetchService::get($json['icon']['url'], $maxSize > 0 ? $maxSize : null);
 
                 if ($body === false) {
+                    // Download failed: keep the previous working media rather
+                    // than deleting it up-front, so the emoji keeps rendering.
                     return;
                 }
+
+                // Store the new bytes first, persist media_path, and only then
+                // delete the previous file if the path changed.
+                $oldPath = ($emoji->media_path && $emoji->media_path !== $mediaPath)
+                    ? $emoji->media_path
+                    : null;
 
                 Storage::put('public/'.$mediaPath, $body);
 
                 $emoji->media_path = $mediaPath;
                 $emoji->save();
+
+                if ($oldPath && Storage::exists('public/'.$oldPath)) {
+                    Storage::delete('public/'.$oldPath);
+                }
             } catch (\Exception) {
                 // Download failed
                 return;
@@ -152,7 +167,6 @@ class CustomEmojiService
 
             return;
         }
-
     }
 
     public static function headCheck($url)

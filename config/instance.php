@@ -32,9 +32,13 @@ return [
         ],
 
         'network' => [
-            'cached' => env('PF_NETWORK_TIMELINE') ? env('INSTANCE_NETWORK_TIMELINE_CACHED', false) : false,
             'cache_dropoff' => env('INSTANCE_NETWORK_TIMELINE_CACHE_DROPOFF', 100),
             'max_hours_old' => env('INSTANCE_NETWORK_TIMELINE_CACHE_MAX_HOUR_INGEST', 2160),
+        ],
+
+        'tag' => [
+            'max_pages' => env('PF_INSTANCE_TIMELINE_TAG_MAX_PAGES', 10),
+            'cursor_ttl' => env('PF_INSTANCE_TIMELINE_TAG_CURSOR_TTL', 3600),
         ],
     ],
 
@@ -87,10 +91,6 @@ return [
     ],
 
     'hide_nsfw_on_public_feeds' => env('PF_HIDE_NSFW_ON_PUBLIC_FEEDS', false),
-
-    'avatar' => [
-        'local_to_cloud' => env('PF_LOCAL_AVATAR_TO_CLOUD', false),
-    ],
 
     'admin_invites' => [
         'enabled' => env('PF_ADMIN_INVITES_ENABLED', true),
