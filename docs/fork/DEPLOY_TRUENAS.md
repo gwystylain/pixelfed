@@ -276,12 +276,10 @@ services:
         @service_worker path /sw.js
         header @service_worker Cache-Control "no-cache"
 
-      # 0.15.2: point the image's inherited healthcheck (a curl of
-      # localhost:8080$HEALTHCHECK_PATH) at Laravel's /up, so "healthy"
-      # means the app boots, not just that Caddy answers. Upstream does
-      # this with `test: healthcheck-frankenphp`, a script the image
-      # doesn't have - see "Building the image".
-      HEALTHCHECK_PATH: "/up"
+      # No HEALTHCHECK_PATH, deliberately. Upstream's 0.15.2 compose sets
+      # it to /up, but /up does not exist: see "What changed at 0.15.2".
+      # The image's inherited healthcheck curls its default /healthcheck,
+      # which Caddy answers.
 
       PHP_POST_MAX_SIZE: "500M"
       PHP_UPLOAD_MAX_FILE_SIZE: "500M"
@@ -487,18 +485,33 @@ stopped on 2026-10-21 for PHP2Shell, and the point of the upgrade was as
 much the base image's PHP 8.5.12 as Pixelfed 0.15.2 (see "Building the
 image" on `--pull`).
 
-- **Run contract, from upstream's compose:** `/up` health route
-  (`HEALTHCHECK_PATH`), `PHP_OPCACHE_VALIDATE_TIMESTAMPS=0` on all three PHP
-  services, PHP upload limits on the scheduler too, scheduler healthcheck
-  timings, Redis 7 → 8. All reflected in the reference YAML above. The
-  stored config was moved with a one-off script in the shape of
-  `truenas-bump-image.py`, which only retags.
+- **Run contract, from upstream's compose:** `PHP_OPCACHE_VALIDATE_TIMESTAMPS=0`
+  on all three PHP services, PHP upload limits on the scheduler too,
+  scheduler healthcheck timings, Redis 7 → 8 (8.10.2 at deploy). All
+  reflected in the reference YAML above. The stored config was moved with
+  a one-off script in the shape of `truenas-bump-image.py`, which only
+  retags.
+- **`/up` is an upstream bug; don't set `HEALTHCHECK_PATH`.** Upstream's
+  compose points the healthcheck at `/up`, and `bootstrap/app.php` passes
+  `health: '/up'` to `withRouting()`, but it also passes `using:`, and
+  Laravel ignores `web:`, `api:` and `health:` whenever `using:` is given.
+  So `/up` is a 404 and the app goes unhealthy. The deploy shipped with it
+  set, `truenas-verify.sh` caught the container stuck at
+  `health: starting`, and the variable was removed (one more
+  `app.update`). Check this one in a future release with
+  `curl -s -o /dev/null -w '%{http_code}' localhost:8080/up` inside the app
+  container before adopting it.
 - **Not copied:** upstream's `healthcheck-frankenphp` and
   `healthcheck-horizon` tests. The first doesn't exist in the image, even
-  on a freshly pulled base; the second is `php artisan horizon:status`, which the deployed worker check
-  already runs (and stricter: it greps for "running").
+  on a freshly pulled base; the second is `php artisan horizon:status`,
+  which the deployed worker check already runs (and stricter: it greps for
+  "running").
+- **`app.update` on a running app recreates every container**, not just
+  the one whose config changed: removing one env var from `app` cost about
+  30 s of downtime across all five.
 - **Image:** libvips compiled from source, FFI binding instead of the PHP
-  extension. Longer build.
+  extension. Built in **4m54s** on this box with `--pull` (ffmpeg and
+  libvips both compiled), 1.46GB.
 - Five migrations, none touching geo: instance nodeinfo cooldown and
   block-sync URL, legacy language and user-filter morph-type
   normalisation, wider avatar `remote_url`.
