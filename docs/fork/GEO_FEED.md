@@ -566,6 +566,14 @@ were broken:
   precedes `ImageOptimize::dispatch()`, so the EXIF read still wins the
   race — but that had to be read to know it, and it is the one check that
   would fail silently, as photos quietly arriving with no coordinates.
+- 0.15.2 was the second, with Guzzle 8, Symfony 8 and Pest 5 arriving
+  underneath. Three things the feature reads changed and each had to be
+  checked: `UserFilterService::filters()` now scopes to Profile morph types
+  (still blocked/muted profile ids), `UpdateStatusService` now clears
+  `place_id` on `location: null` as well as `{}`, and the composer's
+  `mediaUpdate` now saves the media row after replacing its bytes (the
+  observer ignores it: `status_id` doesn't change). The merge commit
+  records why each is safe.
 
 So after every merge, diff the incoming range against the things the feature
 *depends on*, not just the files it *edits*:
@@ -648,7 +656,7 @@ consequence if the assumption breaks:
 | The only components the pane's tree resolves globally are the five in `post-presenters.js` | `post-presenters.js` | A new global tag renders as nothing — no error, just missing UI. The scan in the rebase procedure finds these. |
 | `/api/pixelfed/v1/statuses/{id}` and `/api/v2/statuses/{id}/state` answer a session | `GeoPostPane.vue` | Pane shows "Cannot show this post" for everything. |
 | `StatusGeoObserver` is the only thing that forces a re-derive | `SOURCE_MANUAL` guard in `resolve()` | A new forced path that skips the guard would silently undo hand placed pins. |
-| `UpdateStatusService` clears `place_id` for a `location` with no `id`, and ignores `null` | `locationFieldFor()` in `js/geo/edit-location.js` | If upstream fixes `null`, nothing breaks. If it stops accepting `{}`, "No location tag" stops clearing the tag. |
+| `UpdateStatusService` clears `place_id` for a `location` with no `id` (and, since 0.15.2, for `null`) | `locationFieldFor()` in `js/geo/edit-location.js` | If it stops accepting `{}`, "No location tag" stops clearing the tag. |
 | `PostEditModal` keeps `fields.location`, `originalFields` as a JSON string, and a `canSave` watcher | `PostEditModal.vue` insertions | Save stays disabled after a pin-only change, or a pin-only change is saved as a full edit. |
 | Vue 2 exposes the component on `$el.__vue__` | nothing at runtime — only the headless harness used to test this | Layout regressions stop being catchable without a browser. |
 

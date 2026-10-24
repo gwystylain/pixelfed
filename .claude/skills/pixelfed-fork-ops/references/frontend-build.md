@@ -27,13 +27,41 @@ git add -A public/js public/css public/mix-manifest.json package-lock.json
 git commit -m "Update compiled assets"
 ```
 
+### When Docker Desktop won't come up
+
+If `docker info` hangs, and so does `wsl --list`, the WSL service on the PC
+is wedged. Fixing it means `wsl --shutdown`, which kills anything else the
+user has running in WSL. Don't do that unasked: build on the TrueNAS host
+instead, which happened for v0.15.2. Commit first, so `HEAD` is what gets
+built:
+
+```bash
+ssh truenas 'rm -rf ~/assets-build && mkdir ~/assets-build'
+git archive HEAD | ssh truenas 'tar -x -C ~/assets-build'
+ssh truenas 'cd ~/assets-build && sudo docker run --rm -v "$HOME/assets-build:/app" \
+  -v pixelfed_node_modules:/app/node_modules -w /app \
+  -e NODE_OPTIONS=--max-old-space-size=6144 -e CI=true node:20-bookworm \
+  sh -c "npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error && npm run production" \
+  > .build.log 2>&1; echo exit=$?'
+# run build-assets.sh's verification checks against ~/assets-build, then:
+rm -rf public/js public/css
+ssh truenas 'cd ~/assets-build && tar -c public/js public/css public/mix-manifest.json package-lock.json' | tar -x -C .
+```
+
+The named volume is **required** there, not just faster: `/home` on the
+host is mounted `noexec`, so with `node_modules` in the bind mount npm's
+install scripts fail with `prebuild-install: Permission denied`. Removing
+`public/js` and `public/css` before extracting is safe because the build
+rewrites every file in them; nothing else lives there. Clean up afterwards
+with `sudo rm -rf ~/assets-build` (the container writes as root).
+
 "Update compiled assets" is upstream's own message for exactly this; keep it
 so the history reads the same way theirs does. A short body noting *why*
 (which feature, or which upstream merge) is welcome.
 
 ## What the output should look like
 
-- `public/js/geo.js` (~10 KB) and `public/css/geo.css` (~13 KB) exist and are
+- `public/js/geo.js` (~23 KB) and `public/css/geo.css` (~18 KB) exist and are
   in `mix-manifest.json`.
 - Content-hashed chunk filenames rotate: dozens of `D`eleted and `??` new
   files in `git status` is normal, not a problem. Every chunk that bundles

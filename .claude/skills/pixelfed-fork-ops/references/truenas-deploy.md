@@ -13,9 +13,14 @@ Phases A-B are safe to run without asking. Stop at the marked point.
 
 ```bash
 ssh -o BatchMode=yes truenas 'git clone --branch vX.Y.Z-fork.N --depth 1 https://github.com/gwystylain/pixelfed.git ~/src-vX.Y.Z-fork.N'
-ssh -o BatchMode=yes truenas 'cd ~/src-vX.Y.Z-fork.N && sudo docker build -t local/pixelfed:X.Y.Z-fork.N . 2>&1 | tail -5'
-ssh -o BatchMode=yes truenas 'sudo docker images local/pixelfed'
+ssh -o BatchMode=yes truenas 'cd ~/src-vX.Y.Z-fork.N && sudo docker build --pull -t local/pixelfed:X.Y.Z-fork.N . 2>&1 | tail -5'
+ssh -o BatchMode=yes truenas 'sudo docker images local/pixelfed; sudo docker run --rm --entrypoint php local/pixelfed:X.Y.Z-fork.N -v | head -1'
 ```
+
+`--pull` is not optional: PHP comes from the base image, and without it the
+build reuses the base cached on the first deploy, so the image carries
+whatever PHP was current then (8.5.10 when PHP2Shell hit). Compare the
+`php -v` line against the current PHP security release before going on.
 
 Several minutes (`composer install` runs inside). Both the new and the
 previous image should be listed afterwards; the previous one is the rollback.

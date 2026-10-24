@@ -40,7 +40,17 @@ block. Two special cases:
 - **Compiled assets** (`public/js/*`, `public/css/*`, `public/mix-manifest.json`,
   `package-lock.json`): never resolve by hand. Take upstream's side
   (`git checkout vX.Y.Z -- public/js public/css public/mix-manifest.json package-lock.json`);
-  they get rebuilt in step 6.
+  they get rebuilt in step 6. That checkout only overwrites; it leaves the
+  fork's previous build output (hashed chunks, `geo.js`, `geo.css`) in the
+  index. The rebuild would sweep them out anyway (it replaces everything in
+  `public/js` and `public/css`), but removing them now makes the merge
+  commit's compiled tree exactly upstream's, which you can prove:
+
+  ```bash
+  comm -23 <(git ls-files public/js public/css | sort) \
+           <(git ls-tree -r --name-only vX.Y.Z public/js public/css | sort) | xargs git rm -q
+  git diff --cached --quiet vX.Y.Z -- public/js public/css public/mix-manifest.json package-lock.json && echo clean
+  ```
 - **A block upstream deleted** (this happened: the `providers` array in
   `config/app.php` vanished). Don't re-add the block. Find where upstream
   moved that responsibility (`bootstrap/providers.php`) and register there.

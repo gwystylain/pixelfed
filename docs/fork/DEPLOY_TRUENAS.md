@@ -150,8 +150,17 @@ On the TrueNAS host, from the fork tag — never from `dev`, never from upstream
 
 ```bash
 git clone --branch v0.12.10-fork.1 --depth 1 https://github.com/gwystylain/pixelfed.git ~/src-v0.12.10-fork.1
-cd ~/src-v0.12.10-fork.1 && docker build -t local/pixelfed:0.12.10-fork.1 .
+cd ~/src-v0.12.10-fork.1 && docker build --pull -t local/pixelfed:0.12.10-fork.1 .
+docker run --rm --entrypoint php local/pixelfed:0.12.10-fork.1 -v | head -1
 ```
+
+**Always `--pull`.** PHP itself comes from the `serversideup/php` base, not
+from Pixelfed, so a Pixelfed release never patches PHP — only a fresh base
+does. Without `--pull`, `docker build` silently reuses whatever base this
+host cached the first time. That is how the instance came to be running PHP
+8.5.10 when PHP2Shell (CVE-2026-109618/109619, unauthenticated RCE, fixed in
+8.5.12 on 2026-10-21) landed: the image was a month old and rebuilding it
+would have changed nothing. Read the `php -v` line before deploying.
 
 No `chown` on the clone first: the Dockerfile does `COPY --chown=www-data`
 and a `chown -R` of its own, so host ownership never reaches the image.
@@ -168,6 +177,19 @@ extra stage suggests. Still do it before the downtime window, not inside
 it. The runtime contract is unchanged: same `serversideup/php` base, same
 `/var/www/html`, same uid/gid 33. The image also got *smaller*, 1.91GB to
 1.37GB.
+
+**Since v0.15.x it compiles libvips from source too**, in a third stage
+(`ARG VIPS_VERSION`, 8.18.7, checksum-pinned), replacing the distro
+`libvips42` and the `vips` PHP extension with the `jcupitt/vips` FFI
+binding. Two smoke tests run during the build — `vips list` must show heif
+and jxl, and PHP must write an AVIF and a JXL through FFI — so a broken
+libvips fails the build rather than the first upload.
+
+**Scripts upstream's compose calls must exist in the image.** The base
+cached for v0.14.3 lacked `healthcheck-frankenphp`, which upstream's
+0.15.2 compose uses. `--pull` should bring it, but check before copying a
+`healthcheck:` line from upstream:
+`docker run --rm --entrypoint sh local/pixelfed:<tag> -c 'command -v <script>'`.
 
 ## `.env`
 
@@ -224,7 +246,7 @@ services:
       start_period: 30s
 
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine                # 7 until 0.15.2; reads 7's AOF as-is
     restart: unless-stopped
     command: redis-server --appendonly yes
     volumes:
@@ -252,9 +274,17 @@ services:
         @service_worker path /sw.js
         header @service_worker Cache-Control "no-cache"
 
+      # 0.15.2: point the image's inherited healthcheck (a curl of
+      # localhost:8080$HEALTHCHECK_PATH) at Laravel's /up, so "healthy"
+      # means the app boots, not just that Caddy answers. Upstream does
+      # this with `test: healthcheck-frankenphp`, which this host's cached
+      # base image doesn't have - see "Building the image".
+      HEALTHCHECK_PATH: "/up"
+
       PHP_POST_MAX_SIZE: "500M"
       PHP_UPLOAD_MAX_FILE_SIZE: "500M"
       PHP_OPCACHE_ENABLE: "1"
+      PHP_OPCACHE_VALIDATE_TIMESTAMPS: "0"   # 0.15.2; code only changes with the image
       # serversideup/php startup automation. Rebuilds the caches into the
       # container layer on every start, which is why bootstrap/cache is not
       # mounted. Migration is off so upgrades are run by hand and watched;
@@ -286,6 +316,7 @@ services:
       PHP_POST_MAX_SIZE: "500M"
       PHP_UPLOAD_MAX_FILE_SIZE: "500M"
       PHP_OPCACHE_ENABLE: "1"
+      PHP_OPCACHE_VALIDATE_TIMESTAMPS: "0"
       AUTORUN_ENABLED: "false"           # the app container owns the caches
       AUTORUN_LARAVEL_MIGRATION: "false"
       AUTORUN_LARAVEL_MIGRATION_ISOLATION: "false"
@@ -316,7 +347,10 @@ services:
     command: ["php", "artisan", "schedule:work"]
     stop_signal: SIGTERM
     environment:
+      PHP_POST_MAX_SIZE: "500M"          # 0.15.2: upstream sets these on all
+      PHP_UPLOAD_MAX_FILE_SIZE: "500M"   # three PHP services now
       PHP_OPCACHE_ENABLE: "1"
+      PHP_OPCACHE_VALIDATE_TIMESTAMPS: "0"
       AUTORUN_ENABLED: "false"
       AUTORUN_LARAVEL_MIGRATION: "false"
       AUTORUN_LARAVEL_MIGRATION_ISOLATION: "false"
@@ -336,6 +370,9 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "healthcheck-schedule"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
       start_period: 10s
 ```
 
@@ -440,6 +477,29 @@ Recorded because the next upgrade may look similar.
   are unaffected. (This is the one that would have broken the geo routes —
   GEO_FEED.md.)
 - Nine migrations: five upstream, three geo, one Sanctum table.
+
+### What changed at 0.15.2 specifically
+
+The first deploy that was also a security fix: the instance had been
+stopped on 2026-10-21 for PHP2Shell, and the point of the upgrade was as
+much the base image's PHP 8.5.12 as Pixelfed 0.15.2 (see "Building the
+image" on `--pull`).
+
+- **Run contract, from upstream's compose:** `/up` health route
+  (`HEALTHCHECK_PATH`), `PHP_OPCACHE_VALIDATE_TIMESTAMPS=0` on all three PHP
+  services, PHP upload limits on the scheduler too, scheduler healthcheck
+  timings, Redis 7 → 8. All reflected in the reference YAML above. The
+  stored config was moved with a one-off script in the shape of
+  `truenas-bump-image.py`, which only retags.
+- **Not copied:** upstream's `healthcheck-frankenphp` and
+  `healthcheck-horizon` tests. The first doesn't exist in older bases; the
+  second is `php artisan horizon:status`, which the deployed worker check
+  already runs (and stricter: it greps for "running").
+- **Image:** libvips compiled from source, FFI binding instead of the PHP
+  extension. Longer build.
+- Five migrations, none touching geo: instance nodeinfo cooldown and
+  block-sync URL, legacy language and user-filter morph-type
+  normalisation, wider avatar `remote_url`.
 
 ### Doing it from the shell instead of the UI
 
