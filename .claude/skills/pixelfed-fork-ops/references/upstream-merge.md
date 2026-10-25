@@ -122,3 +122,22 @@ now. Then `references/release-tag.md`, then `references/truenas-deploy.md`.
 committed. If the fixups are large, do them on a branch off `dev`
 (`git switch -c merge-vX.Y.Z`) and fast-forward `dev` when green; the tag and
 the deploy still come from `dev`.
+
+## CI on the fork
+
+Upstream's workflows run on every push to the fork's `dev`. Laravel Tests,
+Larastan, Pint and Build Branch Image are the ones that mean something; a
+red one after a merge is worth reading.
+
+`php-psalm.yml` is **disabled on the fork in GitHub's settings**
+(`gh workflow disable`, 2026-10-25), not in the file. Upstream switched it
+off in August with `on: []`, which GitHub reads as an invalid workflow and
+fails as a 0-second run on every push, upstream included. Disabling it
+in settings changes no file, so it never conflicts with a merge. The
+catch: the setting survives upstream changing the file. If a merge brings
+a real `on:` trigger back, turn it back on:
+
+```bash
+git diff <old-base> vX.Y.Z -- .github/workflows/php-psalm.yml   # did upstream re-enable it?
+gh workflow enable php-psalm.yml --repo gwystylain/pixelfed
+```
