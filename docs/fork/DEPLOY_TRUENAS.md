@@ -212,6 +212,22 @@ read the environment instead; either works. The mount is what this deploy uses.)
   precision — `GEO_PRECISION_DEFAULT=city` snaps pins to city centre unless an
   author opts a single post up to exact. The full block is in `.env.example`
   under `pf-geo`.
+- `INSTANCE_SOFTWARE_UPDATE_DISABLE_FAILED_WARNING=true` (since 2026-10-26)
+  hides the admin dashboard's banner for when the check against
+  `versions.pixelfed.org` *fails*. A newer release that the check does find
+  still shows. The check was succeeding from the container when this was
+  set, so it only matters on the days it doesn't.
+
+**Changing a value on the running instance.** Edit the file in place on the
+host (`sudo tee -a` to add a line; it keeps the owner, mode and inode, so
+the bind mount sees it at once). The containers cache config at start
+(`AUTORUN_LARAVEL_CONFIG_CACHE`), so nothing changes until a restart:
+`sudo docker restart ix-pixelfed-app-1` is enough for anything the web side
+reads, about 7 seconds. Restart the worker and scheduler too if the setting
+affects jobs or scheduled tasks. Check with
+`docker exec ix-pixelfed-app-1 php artisan tinker --execute "var_export(config('<key>'));"`.
+`curl localhost:8095/` from the host gives 404 because the routes are bound
+to the domain; add `-H "Host: <APP_DOMAIN>"`.
 
 ## App YAML
 
