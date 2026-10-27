@@ -272,7 +272,8 @@ class ImmichLibraryController extends Controller
                 ->deleteFileAfterSend(true);
         }
 
-        return $this->immichError($last ?? new ImmichException('Could not get a usable copy from Immich.', ImmichException::UNSUPPORTED));
+        // $candidates is not empty, and every pass either returned or set this.
+        return $this->immichError($last);
     }
 
     /**
