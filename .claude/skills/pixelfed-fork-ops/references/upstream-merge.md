@@ -32,8 +32,9 @@ where they belong: the merge commit is "the state where both sides work".
 
 ## 3. Resolve textual conflicts
 
-They will be in the upstream files the feature edits (the inventory table in
-`docs/fork/GEO_FEED.md` lists all nine, each insertion marked `pf-geo:`).
+They will be in the upstream files the features edit (the inventory tables in
+`docs/fork/GEO_FEED.md` and `docs/fork/IMMICH.md` list them, each insertion
+marked `pf-geo:` or `pf-immich:`; `ComposeModal.vue` carries both).
 Take upstream's version of the surrounding code and re-apply the marked
 block. Two special cases:
 
@@ -75,7 +76,8 @@ Concretely:
 grep -rh '^use App' app/Geo routes/geo.php | sort -u          # every one must exist
 grep -oE "middleware\(\[[^]]+\]" routes/geo.php               # every alias must be in bootstrap/app.php
 grep -n "GeoServiceProvider" bootstrap/providers.php           # still registered
-git grep -c 'pf-geo:' -- <the 8 marked files>                  # 20 expected
+git grep -c 'pf-geo:' -- <the 9 marked files>                  # 24 expected
+git grep -c 'pf-immich:' -- <the 6 marked files>               # 11 expected (IMMICH.md)
 ```
 
 Then prove it rather than reason about it (see `environment.md` for the PATH
