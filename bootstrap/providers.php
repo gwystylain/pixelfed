@@ -1,6 +1,7 @@
 <?php
 
 use App\Geo\GeoServiceProvider;
+use App\Immich\ImmichServiceProvider;
 use App\Providers\AppServiceProvider;
 use App\Providers\CaptchaServiceProvider;
 use App\Providers\HorizonServiceProvider;
@@ -14,4 +15,7 @@ return [
 
     // pf-geo: fork feature, see docs/fork/GEO_FEED.md
     GeoServiceProvider::class,
+
+    // pf-immich: fork feature, see docs/fork/IMMICH.md
+    ImmichServiceProvider::class,
 ];

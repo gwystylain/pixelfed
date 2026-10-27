@@ -50,6 +50,8 @@ mix.js('resources/assets/js/app.js', 'public/js')
 .js('resources/assets/js/settings.js', 'public/js')
 // pf-geo: fork feature, see docs/fork/GEO_FEED.md
 .js('resources/assets/js/geo.js', 'public/js')
+// pf-immich: fork feature, see docs/fork/IMMICH.md
+.js('resources/assets/js/immich.js', 'public/js')
 .vue({ version: 2 });
 
 mix.extract();

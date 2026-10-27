@@ -54,6 +54,12 @@
             <li class="nav-item pl-3 {{request()->is('*import*')?'active':''}}">
                 <a class="nav-link font-weight-light text-muted" href="{{route('settings.import')}}">{{__('settings.import')}}</a>
             </li>
+            {{-- pf-immich: fork feature, see docs/fork/IMMICH.md --}}
+            @if(config('immich.enabled'))
+            <li class="nav-item pl-3 {{request()->is('settings/immich')?'active':''}}">
+                <a class="nav-link font-weight-light text-muted" href="{{route('settings.immich')}}">Immich</a>
+            </li>
+            @endif
             <li class="nav-item pl-3 {{request()->is('settings/data-export')?'active':''}}">
                 <a class="nav-link font-weight-light text-muted" href="{{route('settings.dataexport')}}">{{__('settings.export')}}</a>
             </li>

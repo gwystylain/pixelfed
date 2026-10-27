@@ -96,6 +96,8 @@ class Config
                     'groups' => (bool) config('groups.enabled'),
                     // pf-geo: fork feature, see docs/fork/GEO_FEED.md
                     'geo' => (bool) config('geo.enabled'),
+                    // pf-immich: fork feature, see docs/fork/IMMICH.md
+                    'immich' => (bool) config('immich.enabled'),
                 ],
             ];
         });

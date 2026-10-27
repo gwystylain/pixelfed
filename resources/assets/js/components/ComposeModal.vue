@@ -145,6 +145,8 @@
                         </a>
                         <span v-else-if="page == 2">
                             <button v-if="config.uploader.album_limit > media.length" class="btn btn-outline-primary btn-sm font-weight-bold" @click.prevent="addMedia" id="cm-add-media-btn"><i class="fas fa-plus"></i></button>
+                            <!-- pf-immich: fork feature, see docs/fork/IMMICH.md -->
+                            <immich-picker v-if="config.uploader.album_limit > media.length" compact :remaining="config.uploader.album_limit - media.length" @add="onInputFile({ target: { files: $event } })" />
                             <!-- <button v-if="config.uploader.album_limit > media.length" class="btn btn-outline-primary btn-sm font-weight-bold" @click.prevent="page = 'cameraRoll'" data-toggle="tooltip" data-placement="bottom" title="Upload another photo or video" ><i class="fas fa-chevron-left"></i> Camera Roll</button> -->
                             <button v-else class="btn btn-outline-secondary btn-sm font-weight-bold" disabled><i class="fas fa-plus"></i></button>
                             <b-tooltip target="cm-add-media-btn" triggers="hover">
@@ -257,6 +259,9 @@
                                     </div>
                                 </div>
                             </div>
+
+                            <!-- pf-immich: fork feature, see docs/fork/IMMICH.md -->
+                            <immich-picker v-if="media.length == 0" :remaining="config.uploader.album_limit" @add="onInputFile({ target: { files: $event } })" />
 
                             <div v-if="1==0 && config.ab.top == true && media.length == 0" class="card my-md-3 shadow-none border compose-action text-decoration-none text-dark">
                                 <div @click.prevent="addText" class="card-body py-2">
@@ -446,6 +451,8 @@
                         <div class="border-bottom">
                             <p class="px-4 mb-0 py-2 cursor-pointer" @click="showTagCard()">Tag people</p>
                         </div>
+                        <!-- pf-immich: fork feature, see docs/fork/IMMICH.md -->
+                        <immich-people-suggest :files="files" :tagged="taggedUsernames" @tag="taggedUsernames.push($event)" />
                         <div class="border-bottom">
                             <p class="px-4 mb-0 py-2 cursor-pointer" @click="showCollectionCard()">
                                 <span>Add to Collection <span class="ml-2 badge badge-primary">NEW</span></span>
@@ -850,6 +857,10 @@ import { MediaEditor, MediaEditorPreview, MediaEditorFilterMenu } from 'webgl-me
 import { filterEffects } from './filters';
 // pf-geo: fork feature, see docs/fork/GEO_FEED.md
 import GeoSuggest from './../../components/geo/GeoSuggest.vue';
+// pf-immich: fork feature, see docs/fork/IMMICH.md
+import ImmichPicker from './../../components/immich/ImmichPicker.vue';
+import ImmichPeopleSuggest from './../../components/immich/ImmichPeopleSuggest.vue';
+import { attachImmichUploads } from './../immich/compose.js';
 
 export default {
 
@@ -860,7 +871,10 @@ export default {
         MediaEditorPreview,
         MediaEditorFilterMenu,
         // pf-geo: fork feature, see docs/fork/GEO_FEED.md
-        'geo-suggest': GeoSuggest
+        'geo-suggest': GeoSuggest,
+        // pf-immich: fork feature, see docs/fork/IMMICH.md
+        'immich-picker': ImmichPicker,
+        'immich-people-suggest': ImmichPeopleSuggest
     },
 
     data() {
@@ -1418,6 +1432,11 @@ export default {
                                 return this.collections[idx].id;
                         });
                     }
+
+                    // pf-immich: fork feature, see docs/fork/IMMICH.md. Upload is
+                    // done, so Immich imports get their coordinates before publish.
+                    this.isPosting = true;
+                    await attachImmichUploads(this.files, this.media);
 
                     axios.post('/api/compose/v0/publish', data)
                     .then(res => {
