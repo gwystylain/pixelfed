@@ -56,6 +56,11 @@ class MediaGeoService
             return false;
         }
 
+        // Declined before the read got to it.
+        if ($media->geo_precision === StatusGeoService::PRECISION_NONE) {
+            return false;
+        }
+
         // Remote media is somebody else's file on somebody else's terms.
         if ($media->remote_media) {
             return false;

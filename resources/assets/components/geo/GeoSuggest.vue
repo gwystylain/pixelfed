@@ -31,10 +31,6 @@
 						</button>
 					</div>
 
-					<p v-if="error" class="mb-0 mt-1 text-danger" style="font-size: 11px">
-						{{ error }}
-					</p>
-
 					<div v-if="allowExact" class="custom-control custom-switch mt-2">
 						<input
 							id="geoExactPrecision"
@@ -78,12 +74,21 @@
 	 * same suggestion when the post is published — which is how the mobile
 	 * apps get location without any client changes. Declining is therefore a
 	 * real request that has to reach the server, not just a hidden card:
-	 * `optOut` tells it to leave this post off the map and discards the
-	 * stored coordinates.
+	 * `optOut` records it on the photo, and `applyGeoChoices` delivers it
+	 * once there is an upload to deliver it to, or stops the post.
+	 *
+	 * Works from the composer's `files`, not its `media`: nothing is
+	 * uploaded until publish, so the coordinates are read in the browser
+	 * (js/geo/compose.js). The author's answers live on the File too, so they
+	 * survive this card being unmounted when the author visits another page
+	 * of the composer and comes back.
 	 */
+	import { firstLocatedPhoto, geoDeclined } from './../../js/geo/compose.js';
+
 	export default {
 		props: {
-			media: {
+			// The composer's `files`: [{ file: File, editState }]
+			files: {
 				type: Array,
 				default: () => [],
 			},
@@ -98,13 +103,13 @@
 			return {
 				suggestion: undefined,
 				alternatives: [],
-				mediaId: undefined,
+				// The File the coordinates came from; its `geo` holds the answer.
+				source: null,
 				allowExact: false,
 				exact: false,
 				showAlternatives: false,
 				dismissed: false,
-				error: undefined,
-				attempts: 0,
+				lookup: 0,
 			};
 		},
 
@@ -120,52 +125,55 @@
 		},
 
 		watch: {
-			media: {
+			// Runs whenever a photo is added, removed or reordered: the
+			// array is reactive even though the Files in it are not.
+			files: {
 				immediate: true,
-				handler(media) {
-					if (!media || !media.length) {
-						this.reset();
-
-						return;
-					}
-
-					this.attempts = 0;
-					this.load();
+				handler() {
+					this.locate();
 				},
 			},
 		},
 
 		methods: {
-			load() {
-				const ids = this.media
-					.map((m) => m.id)
-					.filter((id) => id)
-					.join(',');
+			async locate() {
+				const lookup = ++this.lookup;
+				const found = await firstLocatedPhoto(this.files);
 
-				if (!ids.length) {
+				// The photos changed while that was reading; a newer lookup
+				// owns the card now.
+				if (lookup !== this.lookup) {
 					return;
 				}
 
-				axios
-					.get('/api/geo/v1/compose/suggest', { params: { ids } })
-					.then((res) => {
-						if (res.data.available && res.data.place) {
-							this.suggestion = res.data.place;
-							this.alternatives = res.data.alternatives || [];
-							this.mediaId = res.data.media_id;
-							this.allowExact = !!res.data.allow_exact;
-							this.exact = res.data.precision === 'exact';
+				if (!found || geoDeclined(this.files)) {
+					this.reset();
+					this.dismissed = !!found;
 
+					return;
+				}
+
+				// Same photo still leads: keep the card as the author left it.
+				if (found.file === this.source && this.suggestion) {
+					return;
+				}
+
+				this.reset();
+				this.source = found.file;
+
+				axios
+					.get('/api/geo/v1/compose/suggest', { params: { lat: found.lat, lng: found.lng } })
+					.then((res) => {
+						if (lookup !== this.lookup || !res.data.available || !res.data.place) {
 							return;
 						}
 
-						// With queued extraction the coordinates may not be
-						// written yet. Two retries covers it; beyond that the
-						// photo simply has no GPS.
-						if (this.attempts < 2) {
-							this.attempts++;
-							setTimeout(this.load, 2500);
-						}
+						const chosen = found.file.geo && found.file.geo.precision;
+
+						this.suggestion = res.data.place;
+						this.alternatives = res.data.alternatives || [];
+						this.allowExact = !!res.data.allow_exact;
+						this.exact = (chosen || res.data.precision) === 'exact';
 					})
 					.catch(() => {
 						// A missing suggestion is not worth interrupting the
@@ -182,37 +190,17 @@
 			},
 
 			optOut() {
-				this.error = undefined;
 				this.dismissed = true;
 
-				if (!this.mediaId) {
-					return;
+				if (this.source && this.source.geo) {
+					this.source.geo.precision = 'none';
 				}
-
-				axios
-					.put('/api/geo/v1/compose/media/' + this.mediaId, { precision: 'none' })
-					.catch(() => {
-						// This one has to be surfaced rather than swallowed:
-						// the author asked not to be located, and if the
-						// server did not hear it the post still gets a
-						// location assigned on publish.
-						this.dismissed = false;
-						this.error = 'Could not turn the location off. Try again, or remove it after posting.';
-					});
 			},
 
 			savePrecision() {
-				if (!this.mediaId) {
-					return;
+				if (this.source && this.source.geo) {
+					this.source.geo.precision = this.exact ? 'exact' : 'city';
 				}
-
-				axios
-					.put('/api/geo/v1/compose/media/' + this.mediaId, {
-						precision: this.exact ? 'exact' : 'city',
-					})
-					.catch(() => {
-						this.exact = !this.exact;
-					});
 			},
 
 			formatDistance(km) {
@@ -230,10 +218,9 @@
 			reset() {
 				this.suggestion = undefined;
 				this.alternatives = [];
-				this.mediaId = undefined;
+				this.source = null;
 				this.showAlternatives = false;
 				this.dismissed = false;
-				this.error = undefined;
 			},
 		},
 	};

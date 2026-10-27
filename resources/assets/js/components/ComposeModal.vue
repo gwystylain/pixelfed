@@ -484,7 +484,7 @@
                             </p>
                         </div>
                         <!-- pf-geo: fork feature, see docs/fork/GEO_FEED.md -->
-                        <geo-suggest :media="media" :place="place" @select="place = $event" />
+                        <geo-suggest :files="files" :place="place" @select="place = $event" />
                         <div class="border-bottom">
                             <p class="px-4 mb-0 py-2">
                                 <span>Audience</span>
@@ -857,6 +857,7 @@ import { MediaEditor, MediaEditorPreview, MediaEditorFilterMenu } from 'webgl-me
 import { filterEffects } from './filters';
 // pf-geo: fork feature, see docs/fork/GEO_FEED.md
 import GeoSuggest from './../../components/geo/GeoSuggest.vue';
+import { applyGeoChoices } from './../geo/compose.js';
 // pf-immich: fork feature, see docs/fork/IMMICH.md
 import ImmichPicker from './../../components/immich/ImmichPicker.vue';
 import ImmichPeopleSuggest from './../../components/immich/ImmichPeopleSuggest.vue';
@@ -1437,6 +1438,12 @@ export default {
                     // done, so Immich imports get their coordinates before publish.
                     this.isPosting = true;
                     await attachImmichUploads(this.files, this.media);
+                    // pf-geo: fork feature, see docs/fork/GEO_FEED.md. The location
+                    // card's answer, now there are uploads to give it to.
+                    if (!(await applyGeoChoices(this.files, this.media))) {
+                        this.isPosting = false;
+                        return;
+                    }
 
                     axios.post('/api/compose/v0/publish', data)
                     .then(res => {

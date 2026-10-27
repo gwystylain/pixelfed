@@ -63,11 +63,16 @@ class GeoLocationController extends Controller
     }
 
     /**
-     * Suggest a location for a set of draft uploads.
+     * Suggest a location for a set of draft uploads, or for a coordinate
+     * pair read out of a photo that has not been uploaded yet.
      *
      * Returns the coordinates of the first attachment that has any, the
      * nearest city, and the next few alternatives so the author can correct
      * a wrong guess without typing.
+     *
+     * The web composer uses `lat`/`lng`: it only uploads on publish, so
+     * while the author is writing there are no media ids to look up, and it
+     * reads the GPS out of the picked file in the browser instead.
      */
     public function suggest(Request $request)
     {
@@ -75,8 +80,23 @@ class GeoLocationController extends Controller
         abort_if(! $request->user(), 403);
 
         $this->validate($request, [
-            'ids' => 'required|string|max:256',
+            'ids' => 'required_without:lat|nullable|string|max:256',
+            'lat' => 'required_without:ids|nullable|numeric|between:-90,90',
+            'lng' => 'required_with:lat|nullable|numeric|between:-180,180',
         ]);
+
+        if ($request->filled('lat')) {
+            $lat = (float) $request->input('lat');
+            $lng = (float) $request->input('lng');
+
+            // Coordinates from the browser are the photo's EXIF by another
+            // route, so they follow the same switch.
+            if (! config('geo.exif.enabled') || ! Coordinates::isValid($lat, $lng)) {
+                return $this->noSuggestion(null);
+            }
+
+            return $this->suggestionAt($lat, $lng, null, null);
+        }
 
         $ids = collect(explode(',', (string) $request->input('ids')))
             ->map(fn ($id) => trim($id))
@@ -96,42 +116,20 @@ class GeoLocationController extends Controller
             ->first();
 
         if (! $media || ! Coordinates::isValid($media->geo_lat, $media->geo_lng)) {
-            return response()->json([
-                'available' => false,
-                'media_id' => null,
-                'place' => null,
-                'alternatives' => [],
-            ]);
+            return $this->noSuggestion(null);
         }
 
         // Author already opted this upload out; do not keep offering it.
         if ($media->geo_precision === StatusGeoService::PRECISION_NONE) {
-            return response()->json([
-                'available' => false,
-                'media_id' => (string) $media->id,
-                'place' => null,
-                'alternatives' => [],
-            ]);
+            return $this->noSuggestion((string) $media->id);
         }
 
-        $nearby = $this->geocoder->nearby(
+        return $this->suggestionAt(
             (float) $media->geo_lat,
             (float) $media->geo_lng,
-            5,
-            (float) config('geo.autotag.max_distance_km', 50)
+            (string) $media->id,
+            $media->geo_precision
         );
-
-        return response()->json([
-            'available' => ! empty($nearby),
-            'media_id' => (string) $media->id,
-            'precision' => $media->geo_precision ?? config('geo.precision.default'),
-            'allow_exact' => (bool) config('geo.precision.allow_exact'),
-            'place' => isset($nearby[0]) ? $this->presentPlace($nearby[0]) : null,
-            'alternatives' => array_map(
-                [$this, 'presentPlace'],
-                array_slice($nearby, 1)
-            ),
-        ]);
     }
 
     /**
@@ -141,6 +139,11 @@ class GeoLocationController extends Controller
      * Opting out discards the stored coordinates rather than just flagging
      * them — an author asking not to share their location should not leave
      * it sitting in the database.
+     *
+     * `lat`/`lng` hand over coordinates the composer read in the browser,
+     * for a draft whose upload carries none: a photo that was filtered or
+     * cropped is re-encoded before upload, which drops its EXIF. They only
+     * fill a gap — what the server read from the file itself wins.
      */
     public function updateMedia(Request $request, $id)
     {
@@ -148,7 +151,9 @@ class GeoLocationController extends Controller
         abort_if(! $request->user(), 403);
 
         $this->validate($request, [
-            'precision' => 'required|string|in:city,exact,none',
+            'precision' => 'required_without:lat|nullable|string|in:city,exact,none',
+            'lat' => 'required_without:precision|nullable|numeric|between:-90,90',
+            'lng' => 'required_with:lat|nullable|numeric|between:-180,180',
         ]);
 
         abort_if(! ctype_digit((string) $id), 422);
@@ -162,11 +167,25 @@ class GeoLocationController extends Controller
             abort(422, 'Exact coordinates are disabled on this instance');
         }
 
-        $media->geo_precision = $precision;
+        if ($precision !== null) {
+            $media->geo_precision = $precision;
+        }
 
         if ($precision === StatusGeoService::PRECISION_NONE) {
             $media->geo_lat = null;
             $media->geo_lng = null;
+
+            // With queued extraction the EXIF read may not have run yet, and
+            // it must not put back what the author just discarded.
+            $media->geo_extracted_at = $media->geo_extracted_at ?? now();
+        } elseif ($request->filled('lat')) {
+            $lat = (float) $request->input('lat');
+            $lng = (float) $request->input('lng');
+
+            if ($this->mayFillCoordinates($media, $lat, $lng)) {
+                $media->geo_lat = round($lat, 7);
+                $media->geo_lng = round($lng, 7);
+            }
         }
 
         $media->saveQuietly();
@@ -181,6 +200,7 @@ class GeoLocationController extends Controller
         return response()->json([
             'media_id' => (string) $media->id,
             'precision' => $media->geo_precision,
+            'located' => $media->geo_lat !== null,
         ]);
     }
 
@@ -341,6 +361,58 @@ class GeoLocationController extends Controller
         $statusGeo->resolve($status->refresh(), true);
 
         return response()->json($this->presentStatusLocation($status->refresh()));
+    }
+
+    /**
+     * The nearest city to a point and the next few, in the shape the
+     * composer's suggestion card reads.
+     */
+    protected function suggestionAt(float $lat, float $lng, ?string $mediaId, ?string $precision)
+    {
+        $nearby = $this->geocoder->nearby(
+            $lat,
+            $lng,
+            5,
+            (float) config('geo.autotag.max_distance_km', 50)
+        );
+
+        return response()->json([
+            'available' => ! empty($nearby),
+            'media_id' => $mediaId,
+            'precision' => $precision ?? config('geo.precision.default'),
+            'allow_exact' => (bool) config('geo.precision.allow_exact'),
+            'place' => isset($nearby[0]) ? $this->presentPlace($nearby[0]) : null,
+            'alternatives' => array_map(
+                [$this, 'presentPlace'],
+                array_slice($nearby, 1)
+            ),
+        ]);
+    }
+
+    protected function noSuggestion(?string $mediaId)
+    {
+        return response()->json([
+            'available' => false,
+            'media_id' => $mediaId,
+            'place' => null,
+            'alternatives' => [],
+        ]);
+    }
+
+    /**
+     * Whether coordinates from the composer may be written to an upload.
+     *
+     * Drafts only: on a published post the place to move a pin is the
+     * location editor, which marks it as hand placed. And never over a
+     * decline, or over coordinates the server read from the file itself.
+     */
+    protected function mayFillCoordinates(Media $media, float $lat, float $lng): bool
+    {
+        return config('geo.exif.enabled')
+            && ! $media->status_id
+            && $media->geo_lat === null
+            && $media->geo_precision !== StatusGeoService::PRECISION_NONE
+            && Coordinates::isValid($lat, $lng);
     }
 
     /**

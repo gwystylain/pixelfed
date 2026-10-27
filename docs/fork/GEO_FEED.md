@@ -34,7 +34,8 @@ handful of upstream files it does touch are listed exhaustively below.
 1. **Captures photo coordinates.** When a photo is uploaded, GPS coordinates
    are read out of its EXIF and stored on the media row.
 2. **Suggests a location.** The composer offers the nearest city, which the
-   author can accept, replace, or decline. Posts published without a location
+   author can accept, replace, or decline — read from the photo in the
+   browser, before anything is uploaded. Posts published without a location
    get the nearest city assigned server-side, so the mobile apps and any other
    API client behave the same way with no client changes.
 3. **Serves a map.** `/discover/map` shows public photo posts as pins,
@@ -122,6 +123,44 @@ editing `ComposeController` and `Api\ApiV1Controller` means:
 - the web composer, the Mastodon API and any future upload path are covered at
   once;
 - the hooks live in files upstream does not have, so they cannot conflict.
+
+### The composer reads the GPS itself
+
+Upstream's composer (since its 2024 WebGL editor) does not upload a photo when
+it is picked. It keeps `files: [{file, editState}]` beside `media`, filters and
+crops in the browser, and uploads everything in `mediaUpload()` when the
+author presses Post. So while the suggestion card would be on screen, there is
+no upload for the server to read, and the card — which originally asked
+`compose/suggest?ids=` — never appeared at all.
+
+The card now works from the files. `resources/assets/js/geo/exif-gps.js` is a
+port of `ExifGpsReader` to the browser, cut down to latitude and longitude:
+same candidate scan, same bounds checks, same Null Island rule. It reads at
+most the first 8 MB of a file, which takes milliseconds.
+`resources/assets/js/geo/compose.js` finds the first photo, in the composer's
+order, that knows where it was taken — the one the server will take the pin
+from — and asks `compose/suggest?lat=&lng=` for cities near it. Photos picked
+from Immich use Immich's location instead (see `docs/fork/IMMICH.md`): it is
+the photo's EXIF unless the owner corrected it there, and a rendering Immich
+converted has none left to read.
+
+The author's answers wait on the `File` (`file.geo.precision`) until there is
+an upload to give them to. `applyGeoChoices()`, called once in `compose()`
+after upload and before publish, sends them through `PUT compose/media/{id}`,
+along with the coordinates. Those fill in a draft whose upload lost them: a
+photo that was filtered or cropped is re-encoded by the editor before upload,
+which strips its EXIF, so before this such a post had no pin and no city at
+all. They only ever fill a gap — what the server read from the file wins —
+and only on drafts.
+
+A decline is the one answer that has to arrive: without it the server places
+the post on publish anyway. If it cannot be delivered, `applyGeoChoices()`
+says so and the composer does not publish. Delivering it also stamps
+`geo_extracted_at`, and `MediaGeoService::shouldExtract()` skips declined
+uploads, so a queued EXIF read cannot put the coordinates back afterwards.
+
+The two readers must agree. Change one, change the other, and run the parity
+check under [Testing](#testing).
 
 ### Its own page, not an SPA route
 
@@ -495,17 +534,22 @@ resources/assets/js/geo.js                       bundle entry point
 resources/assets/js/geo/spa-bridge.js            store + $router for the pane
 resources/assets/js/geo/post-presenters.js       global media registrations
 resources/assets/js/geo/edit-location.js         what PostEditModal calls to save
+resources/assets/js/geo/exif-gps.js              ExifGpsReader, in the browser
+resources/assets/js/geo/compose.js               the composer card's reads and
+                                                 applyGeoChoices()
 resources/assets/sass/geo.scss                   map styles + Leaflet CSS
 resources/views/geo/index.blade.php              the map page
 tests/Unit/Geo/**                                Coordinates, ExifGpsReader,
                                                  DateWindow
+tests/Feature/Geo/**                             compose/suggest and
+                                                 compose/media (needs sqlite)
 docs/fork/GEO_FEED.md                            this file
 ```
 
 ### Upstream files touched — check each one after a rebase
 
 Every insertion is marked with a `pf-geo:` comment, so
-`git grep -n 'pf-geo:'` lists them all — 23 hits across 9 upstream files,
+`git grep -n 'pf-geo:'` lists them all — 24 hits across 9 upstream files,
 plus the fork's own files and docs, which carry the marker too. The tenth,
 `package.json`, is JSON and cannot carry a comment, so check it by hand.
 
@@ -527,7 +571,7 @@ count above is the same as it was before the pane existed.
 | `resources/views/layouts/partial/nav.blade.php` | Two markers. The map replaces *Network Feed* in the dropdown, with upstream's link kept as the `@else`; the standalone map item after *Discover* now shows only when there is no network feed slot to take. | Link disappears, or *Network Feed* comes back; `/discover/map` still works. |
 | `resources/assets/components/partials/sidebar.vue` | The map replaces *Global* in the Home / Local / Global row (`v-if`, upstream's link becomes `v-else-if`), and `hasPhotoMap`. | As above. |
 | `resources/assets/components/partials/navbar.vue` | The same swap in the SPA's account dropdown, and `hasPhotoMap`. | As above. |
-| `resources/assets/js/components/ComposeModal.vue` | Three insertions: import, `components` entry, one `<geo-suggest>` tag. | Composer stops suggesting locations. Posts still get one assigned server-side on publish, so this degrades rather than breaks. |
+| `resources/assets/js/components/ComposeModal.vue` | Four insertions: imports, `components` entry, one `<geo-suggest :files>` tag, and in `compose()`, after upload and before publish, the `applyGeoChoices()` call that can stop the post. | Composer stops suggesting locations, or forgets the answer: a declined post gets placed anyway, and an edited photo gets no pin. Posts still get a location from unedited photos server-side, so this degrades rather than breaks — but the decline is a privacy promise, so restore it. |
 | `resources/assets/components/partials/post/PostEditModal.vue` | Eight markers: `<geo-location-picker>` with upstream's location search wrapped in `v-else`, import, async `components` entry, two data fields, `\|\| geoPending` on the `canSave` watcher, a reset line, a call in `handleSave`, two methods. | Edit Post falls back to upstream's city search. Pins can still be moved on the map. |
 | `.env.example` | Commented documentation block. | Cosmetic. |
 
@@ -610,7 +654,7 @@ grep -oE "middleware\(\[[^]]+\]" routes/geo.php
 Then verify:
 
 ```bash
-# 1. Insertion points still present (expect 23 hits across 9 upstream files)
+# 1. Insertion points still present (expect 24 hits across 9 upstream files)
 git grep -n 'pf-geo:' -- ':!app/Geo' ':!docs' ':!.claude'
 
 # 1b. Everything the post pane imports from upstream still exists, and
@@ -630,8 +674,8 @@ grep -n 'leaflet' package.json
 # 3. Routes resolve, and nothing upstream added shadows them
 php artisan route:list | grep -E 'discover/map|api/geo'
 
-# 4. Tests
-./vendor/bin/pest tests/Unit/Geo
+# 4. Tests (see Testing for the feature tests' and parity check's setup)
+./vendor/bin/pest tests/Unit/Geo tests/Feature/Geo
 
 # 5. Build the frontend and commit it. Plain `npm install` fails on an
 #    upstream peer conflict; the working command, and why, is in
@@ -653,7 +697,8 @@ consequence if the assumption breaks:
 | `places` carries `lat`/`long` for cities | `ReverseGeocoder` | No suggestions. Check `php artisan import:cities` has been run. |
 | `UserFilterService::filters()` returns blocked/muted profile ids | `GeoFeedService::posts` | Blocked accounts become visible on the map. |
 | `StatusService::get()` returns `media_attachments` and `account` | `GeoFeedService::preview` | Pins vanish (previews are skipped, not fatal). |
-| The composer keeps `media` and `place` on its root component | `ComposeModal.vue` insertion | Suggestion card stops appearing. |
+| The composer keeps picked files in `files: [{file}]`, parallel to `media`, and `place` on its root component | `<geo-suggest :files>`, `applyGeoChoices()` | Suggestion card stops appearing, or answers land on the wrong upload (still the author's own: the endpoint checks). |
+| The composer uploads everything in `mediaUpload()` before `/api/compose/v0/publish` | `applyGeoChoices()` call in `compose()` | A decline never reaches the server and the post is placed anyway. If upstream goes back to uploading on pick, the card could ask by media id again — the server still accepts `ids`. |
 | `window._sharedData.user` is the viewer's `ProfileService` payload | `GeoFeedController::index`, every post component | Comment box, owner checks and admin tools in the pane break. |
 | `$store.state` keys the post components read are the four in [The post pane](#the-post-pane) | `spa-bridge.js` | A newly added key reads `undefined`, so it behaves as off. Degrades, does not throw. |
 | Mutations the post components commit are `updateRelationship` and `updateCustomEmoji` | `spa-bridge.js` | Vuex logs "unknown mutation type" and carries on. |
@@ -682,8 +727,12 @@ upload
   │                                            └─ media.geo_lat / geo_lng
   │                     ┌── runs BEFORE ImageOptimize strips the file
   │
-compose ─ GET /api/geo/v1/compose/suggest ──▶ ReverseGeocoder ──▶ places
-  │       PUT /api/geo/v1/compose/media/:id ─▶ media.geo_precision
+compose ─ js/geo/exif-gps.js reads the picked File (no upload yet)
+  │       GET /api/geo/v1/compose/suggest?lat&lng ──▶ ReverseGeocoder ──▶ places
+  │       answer kept on the File until…
+  │
+upload (on Post) ─ PUT /api/geo/v1/compose/media/:id ─▶ media.geo_precision,
+  │                                       and geo_lat / geo_lng if still empty
   │
 publish
   │
@@ -949,16 +998,27 @@ clears it in the same save.
 
 Nearest cities, nearest first, each with `distance_km`.
 
-### `GET /compose/suggest?ids=1,2,3`
+### `GET /compose/suggest?lat=&lng=` or `?ids=1,2,3`
 
-Suggestion for a set of the caller's own draft uploads. Returns the nearest
-city plus alternatives, or `{"available": false}`.
+Suggestion for a coordinate pair the composer read from a photo, or for a set
+of the caller's own draft uploads. Returns the nearest city plus alternatives,
+or `{"available": false}` — always the latter for coordinates when
+`geo.exif.enabled` is off, since they are the photo's EXIF by another route.
+The web composer uses `lat`/`lng`; `ids` is kept for clients that upload
+first.
 
-### `PUT /compose/media/{id}` — `{"precision": "city"|"exact"|"none"}`
+### `PUT /compose/media/{id}` — `{"precision": "city"|"exact"|"none", "lat": …, "lng": …}`
 
-Records the author's choice for one upload. `none` keeps the post off the map
-**and discards the stored coordinates** — an author asking not to share their
-location should not leave it sitting in the database.
+Records the author's choice for one upload; either part may be left out.
+`none` keeps the post off the map **and discards the stored coordinates** — an
+author asking not to share their location should not leave it sitting in the
+database — and stops a queued EXIF read from bringing them back.
+
+`lat`/`lng` fill in coordinates on a draft whose upload has none, as when the
+editor re-encoded the photo. They never overwrite what the server read, are
+ignored on a published post and on a declined upload, and follow
+`geo.exif.enabled`. The response's `located` says whether the upload has
+coordinates now.
 
 ---
 
@@ -976,12 +1036,36 @@ altitude, malformed input and a fuzz pass.
 Its JPEG output is valid enough that `exif_read_data()` agrees with it, which
 is what makes the reader's results trustworthy rather than self-confirming.
 
+`tests/Feature/Geo` covers the composer's two endpoints — suggesting by
+coordinates, filling a draft's missing coordinates, and a decline that sticks
+— against an in-memory SQLite database. On the Windows dev box PHP has neither
+the driver loaded nor an OpenSSL config (user creation makes a key pair), so
+run them as:
+
+```bash
+OPENSSL_CONF="<php dir>/extras/ssl/openssl.cnf" \
+  php -d extension=pdo_sqlite -d extension=sqlite3 vendor/bin/pest tests/Feature/Geo
+```
+
+**Reader parity.** The composer reads GPS with a JavaScript port of
+`ExifGpsReader` (see [The composer reads the GPS itself](#the-composer-reads-the-gps-itself)).
+After touching either, check they still agree — 572 cases from
+`ExifGpsFixture`, corrupted copies and junk:
+
+```bash
+php tests/Unit/Geo/parity/fixtures.php /tmp/gps
+docker run --rm -v "$PWD:/app:ro" -v /tmp/gps:/gps -w /app node:20-bookworm \
+  node tests/Unit/Geo/parity/check.mjs /gps
+```
+
 Not covered by automated tests, and worth checking by hand after a rebase:
 
-- Upload a photo with GPS through the web composer; the suggestion card
-  appears with the right city.
+- Pick a photo with GPS in the web composer; the suggestion card appears on
+  the details page with the right city, before anything is uploaded. Do it
+  again with a filter applied; the published post still gets a pin.
 - "Somewhere else", "Don't add" and the exact-precision switch each do what
-  they say.
+  they say — "Don't add" survives visiting another page of the composer and
+  coming back, and the published post has no location.
 - Publish from a mobile app with no location set; the post gets one anyway.
 - `/discover/map` clusters when zoomed out and shows pins when zoomed in.
 - A blocked account's posts do not appear on the map.

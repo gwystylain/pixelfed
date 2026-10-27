@@ -163,6 +163,14 @@ follows pins the post through the geo feature's normal path.
 
 It never fails a post: the client gives it 8 seconds and ignores errors.
 
+The geo feature's location card reads the same location before upload:
+`fetchImmichFile()` puts the asset's `location` on `file.immich`, and the card
+(`resources/assets/js/geo/compose.js`) prefers it to reading the file's EXIF.
+Its own `applyGeoChoices()`, the line after the attach call, sends that
+location again for the upload the pin comes from. Both only fill a gap, so
+the second is a no-op; and the attach call skips an upload the author
+declined, whichever order they run in.
+
 ### Names, not person ids
 
 A mapping is "the name *Mum* is `@mum`", matched on a lower-cased,

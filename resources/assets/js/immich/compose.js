@@ -9,8 +9,9 @@
  * Fetch one Immich asset as a File the composer can treat exactly like one
  * picked off the disk.
  *
- * The file carries an `immich` property — the asset id and the people in it
- * — for the people suggestions and for `attachImmichUploads`. A File is not
+ * The file carries an `immich` property — the asset id, the people in it
+ * and where it was taken — for the people suggestions, the location card
+ * and `attachImmichUploads`. A File is not
  * a plain object, so Vue never makes it reactive; components that want the
  * people copy them out.
  *
@@ -44,6 +45,8 @@ export async function fetchImmichFile(id) {
 	file.immich = {
 		assetId: info.id,
 		people: Array.isArray(info.people) ? info.people : [],
+		// Read by the geo feature's location card (js/geo/compose.js).
+		location: info.location || null,
 		variant: res.headers['x-immich-variant'] || null,
 	};
 
