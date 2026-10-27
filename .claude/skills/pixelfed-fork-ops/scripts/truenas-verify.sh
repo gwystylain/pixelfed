@@ -85,9 +85,25 @@ done
 [ -z "$missing" ] && pass "geo API routes registered ($n_api)" || failx "geo API routes missing:$missing"
 [ "${n_map:-0}" -eq 1 ] && pass "discover/map registered" || failx "discover/map routes: $n_map (expected 1)"
 
+# Immich library (docs/fork/IMMICH.md). Named, like the geo routes.
+iroutes=$(sudo docker exec "$app" php artisan route:list --path=immich 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+missing=""
+for route in \
+  "settings/immich" \
+  "api/immich/v1/connection" \
+  "api/immich/v1/status" \
+  "api/immich/v1/assets/{id}/file" \
+  "api/immich/v1/compose/attach" \
+  "api/immich/v1/mappings"
+do
+  printf '%s\n' "$iroutes" | grep -qF -- "$route" || missing="$missing $route"
+done
+[ -z "$missing" ] && pass "immich routes registered ($(printf '%s\n' "$iroutes" | grep -c 'immich' || true))" || failx "immich routes missing:$missing"
+
 echo "== config as the app sees it"
-cfg=$(sudo docker exec "$app" php artisan tinker --execute='echo json_encode(["geo"=>config("geo.enabled"),"cache"=>config("cache.default")]);' 2>/dev/null | tail -1)
+cfg=$(sudo docker exec "$app" php artisan tinker --execute='echo json_encode(["geo"=>config("geo.enabled"),"immich"=>config("immich.enabled"),"cache"=>config("cache.default")]);' 2>/dev/null | tail -1)
 case "$cfg" in *'"geo":true'*) pass "geo.enabled = true";; *) failx "geo.enabled not true ($cfg)";; esac
+case "$cfg" in *'"immich":true'*) pass "immich.enabled = true";; *) failx "immich.enabled not true ($cfg)";; esac
 case "$cfg" in *'"cache":"redis"'*) pass "cache store = redis";; *) warn "cache store: $cfg";; esac
 
 echo "== workers"
@@ -116,8 +132,8 @@ try:
     manifest = json.load(sys.stdin)
 except Exception:
     sys.exit(1)
-# Everything the feature ships, however many chunks that turns into...
-want = [k for k in manifest if k.startswith("/js/geo") or k.startswith("/css/geo")]
+# Everything the features ship, however many chunks that turns into...
+want = [k for k in manifest if k.startswith(("/js/geo", "/css/geo", "/js/immich"))]
 # ...plus the bundles every page needs and the one the map page borrows.
 for k in ("/css/spa.css", "/js/manifest.js", "/js/vendor.js", "/js/app.js", "/js/components.js"):
     if k in manifest:
@@ -135,6 +151,8 @@ else
 fi
 
 c=$(code /api/geo/v1/feed); [ "$c" = "401" ] && pass "/api/geo/v1/feed -> 401 (auth required)" || failx "/api/geo/v1/feed -> $c (expected 401)"
+c=$(code /settings/immich); [ "$c" = "302" ] && pass "/settings/immich -> 302 (login redirect)" || failx "/settings/immich -> $c (expected 302)"
+c=$(code /api/immich/v1/status); [ "$c" = "401" ] && pass "/api/immich/v1/status -> 401 (auth required)" || failx "/api/immich/v1/status -> $c (expected 401)"
 
 echo "== durable state on the datasets"
 for f in "$storage/oauth-private.key" "$storage/oauth-public.key" "$envfile"; do

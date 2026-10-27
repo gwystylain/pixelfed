@@ -89,9 +89,20 @@ The app is now serving new code on the old schema; keep this window short.
 ssh -o BatchMode=yes truenas 'sudo docker exec ix-pixelfed-app-1 php artisan migrate --force 2>&1 | sed "s/\x1b\[[0-9;]*m//g"'
 ```
 
-Count the `DONE` lines against `preflight.sh`'s incoming-migrations list.
-A migration that only dispatches a queued job returns in milliseconds and
-needs the worker to finish it. Never `cache:clear`.
+Count the `DONE` lines against `preflight.sh`'s incoming-migrations list
+(for a fork-only release, against the new files in `database/migrations`
+since the previous tag). A migration that only dispatches a queued job
+returns in milliseconds and needs the worker to finish it. Never
+`cache:clear`.
+
+If the release adds a `features.*` flag to the frontend config, drop just
+the cached config so the new UI shows now rather than in 15 minutes:
+
+```bash
+ssh -o BatchMode=yes truenas "sudo docker exec ix-pixelfed-app-1 php artisan tinker --execute='Illuminate\Support\Facades\Cache::forget(App\Util\Site\Config::CACHE_KEY);'"
+```
+
+0.15.2-fork.2 (Immich): stop to serving ~1 minute, image build 289 s.
 
 ## E. Verify
 

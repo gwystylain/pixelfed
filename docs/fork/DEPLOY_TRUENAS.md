@@ -459,8 +459,19 @@ This is the TrueNAS half of the release loop. It was first done for
    docker exec -it <app> php artisan route:list --path=api/geo
    ```
 
-   Four routes, plus `discover/map`. Log in, open the map, post a photo with
-   GPS.
+   `.claude/skills/pixelfed-fork-ops/scripts/truenas-verify.sh <tag>` checks
+   the geo and Immich routes by name, along with everything else; counting
+   them by hand goes stale every time a route is added. Log in, open the
+   map, post a photo with GPS.
+
+   If the release adds a feature flag to the frontend config (`features.*`
+   in `App\Util\Site\Config`, as Immich did), the old config sits cached in
+   Redis for up to 15 minutes and the new UI stays hidden. Drop that one
+   key rather than clearing the cache:
+
+   ```bash
+   docker exec <app> php artisan tinker --execute='Illuminate\Support\Facades\Cache::forget(App\Util\Site\Config::CACHE_KEY);'
+   ```
 
 7. **Geo, after the first geo-enabled deploy only:**
 
@@ -607,6 +618,11 @@ suspecting four bugs.
 - Signup review depends on working email at two points and is unusable
   without SMTP.
 - `APP_DOMAIN` cannot be changed after federating.
+- Immich, another app on the same host, is reachable from the Pixelfed
+  containers at the host's LAN address and Immich's host port,
+  `http://192.168.1.82:30041` (checked from `ix-pixelfed-app-1` at
+  0.15.2-fork.2). That is the address for Settings → Immich; the public
+  domain would not work from inside, since hairpin NAT fails on this host.
 
 **On the fork**
 

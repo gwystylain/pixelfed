@@ -42,12 +42,36 @@ php artisan route:list --path=api/geo        # boots the app on framework defaul
 php artisan route:cache && php artisan view:cache && php artisan optimize:clear   # proves the entrypoint automation will succeed
 ```
 
+The Immich feature's unit tests are the same kind: `tests/Unit/Immich`.
+**Feature tests** (`tests/Feature/Geo`, sqlite `:memory:`) run here too,
+without touching `php.ini`: the sqlite DLLs ship but aren't enabled, and
+creating a user generates a key pair, which on Windows needs PHP's
+`openssl.cnf`:
+
+```bash
+OPENSSL_CONF="C:/Users/Edward/AppData/Local/Microsoft/WinGet/Packages/PHP.PHP.8.4_Microsoft.Winget.Source_8wekyb3d8bbwe/extras/ssl/openssl.cnf" \
+  php -d extension=pdo_sqlite -d extension=sqlite3 vendor/bin/pest tests/Feature/Geo
+```
+
+Larastan (CI runs it on every push) also runs here:
+`php -d memory_limit=2G vendor/bin/phpstan analyse --memory-limit=2G --no-progress`.
+
 **Docker Desktop** is installed but usually not running. `build-assets.sh`
 starts it and waits; by hand: `docker info` to check, then
 `powershell.exe -Command "Start-Process 'C:\Program Files\Docker\Docker\Docker Desktop.exe'"`
 and poll ~20 s. For any `docker run -v ...:/app`, set `MSYS_NO_PATHCONV=1`
 and pass the host path in `C:/...` form (`cygpath -m`), or Git Bash rewrites
 `/app` into a Windows path.
+
+If Docker Desktop dies on start with `remove ...\Docker\run\dockerInference:
+The file cannot be accessed by the system`, a crash left AF_UNIX socket
+files in `%LOCALAPPDATA%\Docker\run` that nothing on Windows can open or
+delete (error 1920 from PowerShell, `fsutil` and Git Bash alike). Stop every
+Docker process, rename the folder aside (renaming the folder doesn't open
+the files) and recreate it empty; Docker makes fresh sockets on start. Fixed
+this way 2026-10-26; `run.stale-20261026` is left for deletion after a
+reboot. Node is not installed on this PC, so there is no non-Docker way to
+build the frontend.
 
 **Line endings.** `core.autocrlf=true`. After any checkout or merge the
 working copy has CRLF while every committed blob is LF, so:
