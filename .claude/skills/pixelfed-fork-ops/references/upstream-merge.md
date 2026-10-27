@@ -127,9 +127,20 @@ the deploy still come from `dev`.
 
 ## CI on the fork
 
-Upstream's workflows run on every push to the fork's `dev`. Laravel Tests,
-Larastan, Pint and Build Branch Image are the ones that mean something; a
-red one after a merge is worth reading.
+Upstream's workflows run on every push to the fork's `dev`: Laravel Tests,
+Larastan and Pint. A red one after a merge is worth reading.
+
+`docker-push.yml` (Build Branch Image) and `docker-tag.yml` (Build Tagged
+Release Image) are **disabled the same way** (2026-10-27). They publish
+images to `ghcr.io/gwystylain/pixelfed`, but this fork is only ever
+deployed on TrueNAS, which builds its own image on the host from a fork
+tag, so nothing pulled them. The branch build took up to ten minutes on
+every push. Check them after a merge too: the setting is per file, so if
+upstream renames or splits one, the new file starts out enabled.
+
+```bash
+gh workflow list --repo gwystylain/pixelfed --all   # expect docker-push, docker-tag, psalm disabled_manually
+```
 
 `php-psalm.yml` is **disabled on the fork in GitHub's settings**
 (`gh workflow disable`, 2026-10-25), not in the file. Upstream switched it
