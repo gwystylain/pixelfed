@@ -50,6 +50,10 @@ handful of upstream files it does touch are listed exhaustively below.
    wrong. The author can drag the pin, click the map to drop it, search for an
    address, or paste coordinates. That works on the map, and from **Edit Post →
    Other** anywhere the post is shown, where the location tag follows the pin.
+7. **Takes the global feed's place in the menu.** In the sidebar's Home /
+   Local / Global row, the SPA's account dropdown, and the classic pages'
+   dropdown, *Photo Map* replaces *Global* / *Network Feed*. The global feed
+   still works by URL, and its link comes back if `GEO_ENABLED=false`.
 
 ## Design decisions
 
@@ -501,12 +505,14 @@ docs/fork/GEO_FEED.md                            this file
 ### Upstream files touched — check each one after a rebase
 
 Every insertion is marked with a `pf-geo:` comment, so
-`git grep -n 'pf-geo:'` lists them all — 20 hits across 8 upstream files,
-plus the fork's own files and docs, which carry the marker too. The ninth,
+`git grep -n 'pf-geo:'` lists them all — 23 hits across 9 upstream files,
+plus the fork's own files and docs, which carry the marker too. The tenth,
 `package.json`, is JSON and cannot carry a comment, so check it by hand.
 
-Nine files, ~100 inserted lines, one upstream line extended
-(`PostEditModal`'s `canSave` watcher), nothing removed.
+Ten files, ~120 inserted lines, one upstream line extended
+(`PostEditModal`'s `canSave` watcher), nothing removed. The global feed links
+the map displaced are demoted to a `v-else` / `@else` fallback rather than
+deleted, so upstream's markup for them is still there to merge against.
 
 The split view added none of them. It renders six upstream components and
 loads `spa.css`, but it *imports* and *links* them from fork-owned files — the
@@ -518,8 +524,9 @@ count above is the same as it was before the pane existed.
 | `webpack.mix.js` | Adds `geo.js` and `geo.scss` to the build. | Map page 500s on `mix('js/geo.js')`. Re-add both lines. |
 | `package.json` | Adds `leaflet` to `dependencies`. | Build fails resolving `leaflet`. Re-add and `npm install`. |
 | `app/Util/Site/Config.php` | Adds `features.geo` to the frontend config. | SPA sidebar link disappears. Nothing else. |
-| `resources/views/layouts/partial/nav.blade.php` | Adds a nav item. | Link disappears; `/discover/map` still works. |
-| `resources/assets/components/partials/sidebar.vue` | Adds a nav item and `hasPhotoMap`. | As above. |
+| `resources/views/layouts/partial/nav.blade.php` | Two markers. The map replaces *Network Feed* in the dropdown, with upstream's link kept as the `@else`; the standalone map item after *Discover* now shows only when there is no network feed slot to take. | Link disappears, or *Network Feed* comes back; `/discover/map` still works. |
+| `resources/assets/components/partials/sidebar.vue` | The map replaces *Global* in the Home / Local / Global row (`v-if`, upstream's link becomes `v-else-if`), and `hasPhotoMap`. | As above. |
+| `resources/assets/components/partials/navbar.vue` | The same swap in the SPA's account dropdown, and `hasPhotoMap`. | As above. |
 | `resources/assets/js/components/ComposeModal.vue` | Three insertions: import, `components` entry, one `<geo-suggest>` tag. | Composer stops suggesting locations. Posts still get one assigned server-side on publish, so this degrades rather than breaks. |
 | `resources/assets/components/partials/post/PostEditModal.vue` | Eight markers: `<geo-location-picker>` with upstream's location search wrapped in `v-else`, import, async `components` entry, two data fields, `\|\| geoPending` on the `canSave` watcher, a reset line, a call in `handleSave`, two methods. | Edit Post falls back to upstream's city search. Pins can still be moved on the map. |
 | `.env.example` | Commented documentation block. | Cosmetic. |
@@ -544,7 +551,7 @@ git tag --sort=-v:refname | grep -v -- -fork | head -1   # newest upstream relea
 git merge vX.Y.Z
 ```
 
-Conflicts, if any, will be in the nine files above — they are all small
+Conflicts, if any, will be in the ten files above — they are all small
 insertions, so take upstream's version of the surrounding code and re-apply
 the `pf-geo:` block.
 
@@ -603,7 +610,7 @@ grep -oE "middleware\(\[[^]]+\]" routes/geo.php
 Then verify:
 
 ```bash
-# 1. Insertion points still present (expect 20 hits across 8 upstream files)
+# 1. Insertion points still present (expect 23 hits across 9 upstream files)
 git grep -n 'pf-geo:' -- ':!app/Geo' ':!docs' ':!.claude'
 
 # 1b. Everything the post pane imports from upstream still exists, and

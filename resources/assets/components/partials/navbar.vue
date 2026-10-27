@@ -170,7 +170,13 @@
                                                 <div class="small">{{ $t('navmenu.localFeed') }}</div>
                                             </router-link>
 
-                                            <router-link v-if="hasNetworkTimeline" class="nav-link text-center"
+                                            <!-- pf-geo: fork feature, see docs/fork/GEO_FEED.md.
+                                                 The photo map takes the global feed's place. -->
+                                            <a v-if="hasPhotoMap" class="nav-link text-center" href="/discover/map">
+                                                <div class="icon text-lighter"><i class="far fa-map-marked-alt fa-lg"></i></div>
+                                                <div class="small">Photo Map</div>
+                                            </a>
+                                            <router-link v-else-if="hasNetworkTimeline" class="nav-link text-center"
                                                 :to="{ name: 'timeline', params: { scope: 'global' } }">
                                                 <div class="icon text-lighter"><i class="far fa-globe fa-lg"></i></div>
                                                 <div class="small">{{ $t('navmenu.globalFeed') }}</div>
@@ -369,7 +375,9 @@ export default {
             profileLayoutModel: 'grid',
             hasLocalTimeline: true,
             config: window.App.config,
-            hasNetworkTimeline: false
+            hasNetworkTimeline: false,
+            // pf-geo: fork feature, see docs/fork/GEO_FEED.md
+            hasPhotoMap: window.App.config.features.geo === true
         }
     },
 

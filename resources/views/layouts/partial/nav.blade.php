@@ -77,12 +77,22 @@
 									</span>
 									Public Feed
 								</a>
+								{{-- pf-geo: fork feature, see docs/fork/GEO_FEED.md. The photo map takes the network feed's place. --}}
+								@if(config('geo.enabled'))
+								<a class="dropdown-item lead" href="/discover/map">
+									<span style="width: 50px;margin-right:14px;">
+										<span class="fal fa-map-marked-alt text-lighter fa-lg"></span>
+									</span>
+									{{__('Photo Map')}}
+								</a>
+								@else
 								<a class="dropdown-item lead" href="/i/web/timeline/global">
 									<span style="width: 50px;margin-right:14px;">
 										<span class="fal fa-globe text-lighter fa-lg"></span>
 									</span>
 									Network Feed
 								</a>
+								@endif
 								@else
 								<a class="dropdown-item lead" href="/">
 									<span style="width: 50px;margin-right:14px;">
@@ -104,8 +114,8 @@
 									</span>
 									{{__('navmenu.discover')}}
 								</a>
-								{{-- pf-geo: fork feature, see docs/fork/GEO_FEED.md --}}
-								@if(config('geo.enabled'))
+								{{-- pf-geo: fork feature, see docs/fork/GEO_FEED.md. Only where there is no network feed slot above for the map to take. --}}
+								@if(config('geo.enabled') && ! config('federation.network_timeline'))
 								<a class="dropdown-item lead" href="/discover/map">
 									<span style="width: 50px;margin-right:14px;">
 										<span class="fal fa-map-marked-alt text-lighter fa-lg"></span>

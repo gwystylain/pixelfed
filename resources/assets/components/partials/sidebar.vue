@@ -86,8 +86,21 @@
                             <div class="icon text-lighter"><i class="far fa-globe fa-lg"></i></div>
                             <div class="small">{{ $t('navmenu.globalFeed') }}</div>
                         </router-link> -->
+                        <!-- pf-geo: fork feature, see docs/fork/GEO_FEED.md.
+                             The photo map takes the global feed's place. A
+                             plain anchor, not a router-link: the map is its
+                             own page rather than an SPA route. The global
+                             feed is still there by URL, and comes back here
+                             if the map is switched off. -->
                         <a
-                            v-if="hasNetworkTimeline"
+                            v-if="hasPhotoMap"
+                            class="nav-link text-center"
+                            href="/discover/map">
+                            <div class="icon text-lighter"><i class="far fa-map-marked-alt fa-lg"></i></div>
+                            <div class="small">Photo Map</div>
+                        </a>
+                        <a
+                            v-else-if="hasNetworkTimeline"
                             class="nav-link text-center"
                             href="/i/web/timeline/global"
                             :class="[ $route.path == '/i/web/timeline/global' ? 'router-link-exact-active active' : '' ]"
@@ -119,16 +132,6 @@
                         <span class="icon text-lighter"><i class="far fa-compass"></i></span>
                         {{ $t('navmenu.discover') }}
                     </router-link>
-                </li>
-
-                <!-- pf-geo: fork feature, see docs/fork/GEO_FEED.md.
-                     A plain anchor, not a router-link: the map is its own
-                     page rather than an SPA route. -->
-                <li v-if="hasPhotoMap" class="nav-item">
-                    <a class="nav-link" href="/discover/map">
-                        <span class="icon text-lighter"><i class="far fa-map-marked-alt"></i></span>
-                        Photo Map
-                    </a>
                 </li>
 
                 <li class="nav-item">
